@@ -1,0 +1,40 @@
+import { Router } from "express";
+import { q } from "../db.js";
+import { requireAuth } from "../middleware/auth.js";
+
+const router = Router();
+router.use(requireAuth);
+
+router.get("/", async (req, res) => {
+  try {
+    const rows = await q(`
+      SELECT id, \`key\`, value, category, label, description
+      FROM settings
+      ORDER BY category, label
+    `);
+    const parsed = rows.map((r) => ({ ...r, value: JSON.parse(r.value) }));
+    res.json(parsed);
+  } catch (err) {
+    console.error("GET /settings error:", err);
+    res.status(500).json({ error: err.sqlMessage ?? err.message ?? "Failed to fetch settings" });
+  }
+});
+
+router.patch("/", async (req, res) => {
+  try {
+    const { updates } = req.body;
+    if (!Array.isArray(updates) || updates.length === 0) {
+      return res.status(400).json({ error: "Kailangan ng updates array." });
+    }
+    for (const { key, value } of updates) {
+      await q(`UPDATE settings SET value = :value WHERE \`key\` = :key`, { value: JSON.stringify(value), key });
+    }
+    await q("INSERT INTO audit_logs (user_id, action, module, ip_address) VALUES (:uid,'update','settings',:ip)", { uid: req.user.id, ip: req.ip });
+    res.json({ ok: true });
+  } catch (err) {
+    console.error("PATCH /settings error:", err);
+    res.status(500).json({ error: err.sqlMessage ?? err.message ?? "Failed to update settings" });
+  }
+});
+
+export default router;
