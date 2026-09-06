@@ -40,6 +40,7 @@ const ROLE_PERMISSIONS: Record<UserRole, string[]> = {
 };
 
 const emptyForm = { full_name: "", email: "", password: "", role: "employee" as UserRole, employee_id: "" };
+const emptyEditForm = { full_name: "", email: "", password: "", role: "employee" as UserRole, employee_id: "", status: "active" as UserRow["status"] };
 
 export function UserManagementPage() {
   const [users, setUsers] = useState<UserRow[]>([]);
@@ -53,6 +54,20 @@ export function UserManagementPage() {
   const [form, setForm] = useState(emptyForm);
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
+
+  // ---- BAGO: Edit User modal state ----
+  const [showEditModal, setShowEditModal] = useState(false);
+  const [editingUser, setEditingUser] = useState<UserRow | null>(null);
+  const [editForm, setEditForm] = useState(emptyEditForm);
+  const [editSaving, setEditSaving] = useState(false);
+  const [editError, setEditError] = useState<string | null>(null);
+
+  // ---- BAGO: Change Role modal state ----
+  const [showRoleModal, setShowRoleModal] = useState(false);
+  const [roleTargetUser, setRoleTargetUser] = useState<UserRow | null>(null);
+  const [roleValue, setRoleValue] = useState<UserRole>("employee");
+  const [roleSaving, setRoleSaving] = useState(false);
+  const [roleError, setRoleError] = useState<string | null>(null);
 
   const fetchUsers = useCallback(async () => {
     setLoading(true);
@@ -100,6 +115,89 @@ export function UserManagementPage() {
       setFormError(err.message ?? "Nabigo ang pag-add ng user.");
     } finally {
       setSaving(false);
+    }
+  }
+
+  // ---- BAGO: buksan ang Edit modal na naka-prefill sa data ng napiling user ----
+  function openEditModal(user: UserRow) {
+    setEditingUser(user);
+    setEditError(null);
+    // hanapin yung employee_id kung naka-link (kung meron ang backend nito sa response;
+    // kung wala, mananatiling blangko at pwedeng piliin ulit)
+    setEditForm({
+      full_name: user.full_name,
+      email: user.email,
+      password: "", // laging blangko simula — iiwan lang blangko kung ayaw palitan
+      role: user.role,
+      employee_id: (user as any).employee_id ?? "",
+      status: user.status,
+    });
+    setShowEditModal(true);
+  }
+
+  async function handleEditUser(e: React.FormEvent) {
+    e.preventDefault();
+    if (!editingUser) return;
+    setEditError(null);
+
+    if (!editForm.full_name.trim() || !editForm.email.trim()) {
+      setEditError("Kailangan ng full name at email.");
+      return;
+    }
+    if (editForm.password && editForm.password.length < 6) {
+      setEditError("Kung magpapalit ng password, dapat hindi bababa sa 6 characters.");
+      return;
+    }
+    if (editForm.role === "employee" && !editForm.employee_id) {
+      setEditError("Kailangan mag-link ng employee record para sa role na 'Employee'.");
+      return;
+    }
+
+    setEditSaving(true);
+    try {
+      // TANDAAN: password ay isasama LANG kung may binigay na bagong value
+      const payload: Record<string, any> = {
+        full_name: editForm.full_name,
+        email: editForm.email,
+        role: editForm.role,
+        status: editForm.status,
+        employee_id: editForm.employee_id || null,
+      };
+      if (editForm.password) payload.password = editForm.password;
+
+      await api.updateUser(editingUser.id, payload);
+      setShowEditModal(false);
+      setEditingUser(null);
+      fetchUsers();
+    } catch (err: any) {
+      setEditError(err.message ?? "Nabigo ang pag-update ng user.");
+    } finally {
+      setEditSaving(false);
+    }
+  }
+
+  // ---- BAGO: Change Role quick modal ----
+  function openRoleModal(user: UserRow) {
+    setRoleTargetUser(user);
+    setRoleValue(user.role);
+    setRoleError(null);
+    setShowRoleModal(true);
+  }
+
+  async function handleChangeRole(e: React.FormEvent) {
+    e.preventDefault();
+    if (!roleTargetUser) return;
+    setRoleError(null);
+    setRoleSaving(true);
+    try {
+      await api.updateUser(roleTargetUser.id, { role: roleValue });
+      setShowRoleModal(false);
+      setRoleTargetUser(null);
+      fetchUsers();
+    } catch (err: any) {
+      setRoleError(err.message ?? "Nabigo ang pagpalit ng role.");
+    } finally {
+      setRoleSaving(false);
     }
   }
 
@@ -211,8 +309,13 @@ export function UserManagementPage() {
                               </button>
                             </DropdownMenuTrigger>
                             <DropdownMenuContent align="end">
-                              <DropdownMenuItem><Edit2 className="w-3.5 h-3.5 mr-2" /> Edit User</DropdownMenuItem>
-                              <DropdownMenuItem><Lock className="w-3.5 h-3.5 mr-2" /> Change Role</DropdownMenuItem>
+                              {/* FIX: dating walang onClick — kaya walang nangyayari kapag pinindot */}
+                              <DropdownMenuItem onClick={() => openEditModal(user)}>
+                                <Edit2 className="w-3.5 h-3.5 mr-2" /> Edit User
+                              </DropdownMenuItem>
+                              <DropdownMenuItem onClick={() => openRoleModal(user)}>
+                                <Lock className="w-3.5 h-3.5 mr-2" /> Change Role
+                              </DropdownMenuItem>
                               <DropdownMenuItem
                                 className="text-destructive focus:text-destructive"
                                 onClick={async () => { await api.updateUser(user.id, { status: "suspended" }); fetchUsers(); }}
@@ -263,6 +366,7 @@ export function UserManagementPage() {
         </div>
       )}
 
+      {/* ==== ADD USER MODAL (dating code, walang binago) ==== */}
       <Dialog open={showAddModal} onOpenChange={setShowAddModal}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader><DialogTitle>Add User</DialogTitle></DialogHeader>
@@ -317,6 +421,109 @@ export function UserManagementPage() {
               <button type="button" onClick={() => setShowAddModal(false)} className="px-4 py-2 text-sm rounded-lg border border-border hover:bg-muted/50 transition-colors">Cancel</button>
               <button type="submit" disabled={saving} className="px-4 py-2 text-sm bg-primary text-white rounded-lg hover:bg-primary/90 disabled:opacity-60 transition-colors">
                 {saving ? "Saving..." : "Add User"}
+              </button>
+            </div>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* ==== BAGO: EDIT USER MODAL ==== */}
+      <Dialog open={showEditModal} onOpenChange={setShowEditModal}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader><DialogTitle>Edit User — {editingUser?.full_name}</DialogTitle></DialogHeader>
+          <form onSubmit={handleEditUser} className="space-y-4">
+            {editError && (
+              <div className="p-2.5 bg-destructive/10 border border-destructive/20 rounded-lg text-sm text-destructive">{editError}</div>
+            )}
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium text-foreground">Full Name</label>
+              <input value={editForm.full_name} onChange={(e) => setEditForm({ ...editForm, full_name: e.target.value })}
+                className="w-full px-3.5 py-2.5 rounded-lg border border-border bg-input-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/20" />
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium text-foreground">Email (gamit para sa login)</label>
+              <input type="email" value={editForm.email} onChange={(e) => setEditForm({ ...editForm, email: e.target.value })}
+                className="w-full px-3.5 py-2.5 rounded-lg border border-border bg-input-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/20" />
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium text-foreground">Bagong Password</label>
+              <input type="password" value={editForm.password} onChange={(e) => setEditForm({ ...editForm, password: e.target.value })}
+                className="w-full px-3.5 py-2.5 rounded-lg border border-border bg-input-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/20"
+                placeholder="Iwanan blangko kung hindi babaguhin" />
+              <p className="text-xs text-muted-foreground">Punan lang ito kung gusto mong palitan ang password. Kung blangko, mananatili ang luma.</p>
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium text-foreground">Role</label>
+              <select
+                value={editForm.role}
+                onChange={(e) => setEditForm({ ...editForm, role: e.target.value as UserRole })}
+                className="w-full px-3.5 py-2.5 rounded-lg border border-border bg-input-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/20"
+              >
+                <option value="employee">Employee</option>
+                <option value="supervisor">Supervisor</option>
+                <option value="hr_manager">HR Manager</option>
+                <option value="admin">Admin</option>
+              </select>
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium text-foreground">Status</label>
+              <select
+                value={editForm.status}
+                onChange={(e) => setEditForm({ ...editForm, status: e.target.value as UserRow["status"] })}
+                className="w-full px-3.5 py-2.5 rounded-lg border border-border bg-input-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/20"
+              >
+                <option value="active">Active</option>
+                <option value="inactive">Inactive</option>
+                <option value="suspended">Suspended</option>
+              </select>
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium text-foreground">
+                Link to Employee {editForm.role === "employee" && <span className="text-destructive">*</span>}
+              </label>
+              <select value={editForm.employee_id} onChange={(e) => setEditForm({ ...editForm, employee_id: e.target.value })}
+                className="w-full px-3.5 py-2.5 rounded-lg border border-border bg-input-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/20">
+                <option value="">Wala</option>
+                {employees.map((emp) => (
+                  <option key={emp.id} value={emp.id}>{emp.full_name}</option>
+                ))}
+              </select>
+            </div>
+            <div className="flex justify-end gap-2 pt-2">
+              <button type="button" onClick={() => setShowEditModal(false)} className="px-4 py-2 text-sm rounded-lg border border-border hover:bg-muted/50 transition-colors">Cancel</button>
+              <button type="submit" disabled={editSaving} className="px-4 py-2 text-sm bg-primary text-white rounded-lg hover:bg-primary/90 disabled:opacity-60 transition-colors">
+                {editSaving ? "Saving..." : "Save Changes"}
+              </button>
+            </div>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* ==== BAGO: CHANGE ROLE QUICK MODAL ==== */}
+      <Dialog open={showRoleModal} onOpenChange={setShowRoleModal}>
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader><DialogTitle>Change Role — {roleTargetUser?.full_name}</DialogTitle></DialogHeader>
+          <form onSubmit={handleChangeRole} className="space-y-4">
+            {roleError && (
+              <div className="p-2.5 bg-destructive/10 border border-destructive/20 rounded-lg text-sm text-destructive">{roleError}</div>
+            )}
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium text-foreground">Bagong Role</label>
+              <select
+                value={roleValue}
+                onChange={(e) => setRoleValue(e.target.value as UserRole)}
+                className="w-full px-3.5 py-2.5 rounded-lg border border-border bg-input-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/20"
+              >
+                <option value="employee">Employee</option>
+                <option value="supervisor">Supervisor</option>
+                <option value="hr_manager">HR Manager</option>
+                <option value="admin">Admin</option>
+              </select>
+            </div>
+            <div className="flex justify-end gap-2 pt-2">
+              <button type="button" onClick={() => setShowRoleModal(false)} className="px-4 py-2 text-sm rounded-lg border border-border hover:bg-muted/50 transition-colors">Cancel</button>
+              <button type="submit" disabled={roleSaving} className="px-4 py-2 text-sm bg-primary text-white rounded-lg hover:bg-primary/90 disabled:opacity-60 transition-colors">
+                {roleSaving ? "Saving..." : "Save Role"}
               </button>
             </div>
           </form>

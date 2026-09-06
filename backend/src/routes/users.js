@@ -1,10 +1,16 @@
 import { Router } from "express";
 import bcrypt from "bcryptjs";
+import crypto from "node:crypto"; // FIX: missing import dati
 import { q } from "../db.js";
-import { requireAuth } from "../middleware/auth.js";
+import { requireAuth, requireRole } from "../middleware/auth.js";
 
 const router = Router();
 router.use(requireAuth);
+
+// Palagay: "admin" lang ang dapat makapag-manage ng users.
+// Kung gusto mong makapag-VIEW din ang "hr_manager" (di lang admin),
+// palitan mo yung line sa GET "/" ng: requireRole("admin", "hr_manager")
+router.use(requireRole("admin"));
 
 // GET /users — kasama ang department (galing sa naka-link na employee, kung meron)
 router.get("/", async (req, res) => {

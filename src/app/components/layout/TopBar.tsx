@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useMemo } from "react";
-import { Search, Bell, ChevronDown, LogOut, User, Settings, HelpCircle, FileText } from "lucide-react";
+import { Search, Bell, ChevronDown, LogOut, User, Settings, FileText } from "lucide-react";
 import { useNavigate } from "react-router";
 import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "../../context/AuthContext";
@@ -94,6 +94,12 @@ export function TopBar() {
     .map((n) => n[0])
     .join("")
     .toUpperCase() ?? "U";
+
+  // "Settings" ay para lang sa admin, base sa MODULE_ROLES["/settings"]
+  // sa src/app/config/permissions.ts — hindi natin i-hardcode ulit dito,
+  // pero simpleng string check muna para maiwasang mag-import ng buong
+  // permissions module sa TopBar.
+  const isAdmin = user?.role === "admin";
 
   async function handleSignOut() {
     await signOut();
@@ -265,12 +271,11 @@ export function TopBar() {
             <DropdownMenuItem onClick={() => navigate("/profile")}>
               <User className="w-4 h-4 mr-2" /> My Profile
             </DropdownMenuItem>
-            <DropdownMenuItem onClick={() => navigate("/settings")}>
-              <Settings className="w-4 h-4 mr-2" /> Settings
-            </DropdownMenuItem>
-            <DropdownMenuItem>
-              <HelpCircle className="w-4 h-4 mr-2" /> Help & Support
-            </DropdownMenuItem>
+            {isAdmin && (
+              <DropdownMenuItem onClick={() => navigate("/settings")}>
+                <Settings className="w-4 h-4 mr-2" /> Settings
+              </DropdownMenuItem>
+            )}
             <DropdownMenuSeparator />
             <DropdownMenuItem onClick={handleSignOut} className="text-destructive focus:text-destructive">
               <LogOut className="w-4 h-4 mr-2" /> Sign Out

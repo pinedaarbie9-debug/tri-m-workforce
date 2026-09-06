@@ -1,11 +1,12 @@
 import { Router } from "express";
 import { q } from "../db.js";
-import { requireAuth } from "../middleware/auth.js";
+import { requireAuth, requireRole } from "../middleware/auth.js";
 
 const router = Router();
 router.use(requireAuth);
 
-router.get("/", async (req, res) => {
+// GET: pwedeng tingnan ng admin at hr_manager (i-adjust kung sino talaga ang dapat)
+router.get("/", requireRole("admin", "hr_manager"), async (req, res) => {
   try {
     const rows = await q(`
       SELECT id, \`key\`, value, category, label, description
@@ -20,7 +21,8 @@ router.get("/", async (req, res) => {
   }
 });
 
-router.patch("/", async (req, res) => {
+// PATCH: "admin" lang ang pwedeng mag-edit ng system settings
+router.patch("/", requireRole("admin"), async (req, res) => {
   try {
     const { updates } = req.body;
     if (!Array.isArray(updates) || updates.length === 0) {

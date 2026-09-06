@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import {
   Search, Plus, Download, MoreHorizontal, Edit2, Trash2, Eye, Mail,
-  ChevronLeft, ChevronRight, UserCheck, UserX, Loader2, RefreshCw,
+  ChevronLeft, ChevronRight, UserCheck, UserX, Loader2, RefreshCw, RotateCw,
 } from "lucide-react";
 import { motion } from "motion/react";
 import {
@@ -28,6 +28,27 @@ const typeBadge: Record<EmploymentType, string> = {
 function getDeptName(emp: Employee): string {
   if (emp.department?.name) return emp.department.name;
   return emp.department_id ?? "—";
+}
+
+// Ginagawa ang susunod na Employee ID gamit ang format na EMP-{taon}-{sequence},
+// hal. EMP-2026-001, EMP-2026-002... Tinitignan lang ang mga existing code na
+// tumutugma sa format na ito PARA SA KASALUKUYANG TAON — kaya kahit may mga
+// legacy/manual IDs tulad ng "415265" o "EMP-001" sa listahan, hindi sila
+// nakakasira sa pag-increment, basta't magsisimula lang ulit sa 001 kada
+// bagong taon.
+function generateEmployeeCode(employees: Employee[]): string {
+  const year = new Date().getFullYear();
+  const prefix = `EMP-${year}-`;
+  let maxSeq = 0;
+  for (const emp of employees) {
+    const code = emp.employee_code ?? "";
+    if (code.startsWith(prefix)) {
+      const seq = parseInt(code.slice(prefix.length), 10);
+      if (!isNaN(seq) && seq > maxSeq) maxSeq = seq;
+    }
+  }
+  const next = String(maxSeq + 1).padStart(3, "0");
+  return `${prefix}${next}`;
 }
 
 const POLL_MS = 20000;
@@ -113,9 +134,13 @@ export function EmployeesPage() {
   }
 
   function openAddModal() {
-    setForm(emptyForm);
+    setForm({ ...emptyForm, employee_code: generateEmployeeCode(employees) });
     setFormError(null);
     setShowAddModal(true);
+  }
+
+  function regenerateEmployeeCode() {
+    setForm((f) => ({ ...f, employee_code: generateEmployeeCode(employees) }));
   }
 
   async function handleAddEmployee(e: React.FormEvent) {
@@ -320,8 +345,22 @@ export function EmployeesPage() {
 
             <div className="space-y-1.5">
               <label className="text-sm font-medium text-foreground">Employee ID</label>
-              <input value={form.employee_code} onChange={(e) => setForm({ ...form, employee_code: e.target.value })}
-                className="w-full px-3.5 py-2.5 rounded-lg border border-border bg-input-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/20" placeholder="e.g. EMP-2026-001" />
+              <div className="flex items-center gap-2">
+                <input
+                  value={form.employee_code}
+                  readOnly
+                  className="w-full px-3.5 py-2.5 rounded-lg border border-border bg-muted/40 text-sm text-muted-foreground font-mono cursor-not-allowed"
+                />
+                <button
+                  type="button"
+                  onClick={regenerateEmployeeCode}
+                  title="Regenerate ID"
+                  className="shrink-0 w-9 h-9 rounded-lg border border-border flex items-center justify-center hover:bg-muted/50 transition-colors"
+                >
+                  <RotateCw className="w-4 h-4 text-muted-foreground" />
+                </button>
+              </div>
+              <p className="text-xs text-muted-foreground">Awtomatikong nabubuo — hindi na kailangan i-type.</p>
             </div>
 
             <div className="grid grid-cols-2 gap-3">

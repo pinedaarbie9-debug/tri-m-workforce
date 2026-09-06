@@ -20,6 +20,8 @@ import {
 import { motion, AnimatePresence } from "motion/react";
 import { cn } from "../../components/ui/utils";
 import { useNotifications } from "./NotificationsContext";
+import { useAuth } from "../../context/AuthContext";
+import { canAccess } from "../../config/permissions";
 import logo from "../../assets/tri-m-logo.png";
 
 interface NavItem {
@@ -81,6 +83,17 @@ interface SidebarProps {
 export function Sidebar({ collapsed, onToggle }: SidebarProps) {
   const location = useLocation();
   const { unreadCount } = useNotifications();
+  const { user } = useAuth();
+
+  // BAGO: i-filter muna ang bawat group base sa role ng naka-login na user
+  // gamit ang canAccess() helper (mula sa config/permissions.ts). Kung
+  // maubos ang items ng isang group (walang natirang pwedeng makita ang
+  // role na ito), itinatago rin ang buong group title para hindi lumabas
+  // ang isang blangkong section header.
+  const visibleGroups = NAV_GROUPS.map((group) => ({
+    ...group,
+    items: group.items.filter((item) => canAccess(item.path, user?.role)),
+  })).filter((group) => group.items.length > 0);
 
   return (
     <motion.aside
@@ -114,9 +127,9 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
         </div>
       </div>
 
-      {/* Navigation */}
+      {/* Navigation — gumagamit na ng visibleGroups sa halip na NAV_GROUPS */}
       <div className="flex-1 overflow-y-auto py-3 space-y-1 scrollbar-thin">
-        {NAV_GROUPS.map((group) => (
+        {visibleGroups.map((group) => (
           <div key={group.title} className="mb-1">
             <AnimatePresence initial={false}>
               {!collapsed && (

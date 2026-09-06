@@ -5,7 +5,7 @@ import { motion } from "motion/react";
 import { api, exportToCsv } from "../../lib/api";
 import type { AuditLog, AuditAction } from "../../types";
 
-const actionConfig: Record<AuditAction, { label: string; className: string }> = {
+const actionConfig: Record<string, { label: string; className: string }> = {
   create: { label: "Create", className: "bg-emerald-100 text-emerald-700" },
   update: { label: "Update", className: "bg-blue-100 text-blue-700" },
   delete: { label: "Delete", className: "bg-red-100 text-red-700" },
@@ -15,23 +15,31 @@ const actionConfig: Record<AuditAction, { label: string; className: string }> = 
   import: { label: "Import", className: "bg-cyan-100 text-cyan-700" },
 };
 
-function buildDescription(log: AuditLog): string {
-  const action = actionConfig[log.action]?.label ?? log.action;
-  if (log.action === "login") return "Successful login";
-  if (log.action === "logout") return "User logged out";
-  if (log.record_id) return `${action}d record in ${log.module} (#${log.record_id.slice(0, 8)})`;
-  return `${action}d in ${log.module}`;
+const fallbackActionConfig = { label: "Unknown", className: "bg-gray-100 text-gray-500" };
+
+function getActionConfig(action: unknown) {
+  if (typeof action === "string" && actionConfig[action]) return actionConfig[action];
+  return fallbackActionConfig;
+}
+
+function buildDescription(log: any): string {
+  const action = getActionConfig(log?.action).label;
+  const moduleName = log?.module ?? "system";
+  if (log?.action === "login") return "Successful login";
+  if (log?.action === "logout") return "User logged out";
+  if (log?.record_id) return `${action}d record in ${moduleName} (#${String(log.record_id).slice(0, 8)})`;
+  return `${action}d in ${moduleName}`;
 }
 
 const POLL_MS = 20000;
 
 export function AuditLogsPage() {
-  const [logs, setLogs] = useState<AuditLog[]>([]);
+  const [logs, setLogs] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   const [search, setSearch] = useState("");
-  const [actionFilter, setActionFilter] = useState<AuditAction | "all">("all");
+  const [actionFilter, setActionFilter] = useState<string>("all");
   const [page, setPage] = useState(1);
   const perPage = 7;
 
@@ -40,10 +48,13 @@ export function AuditLogsPage() {
     setError(null);
     try {
       const data = await api.getAuditLogs();
-      setLogs(data);
+      // Defensive: siguraduhing array talaga ang natanggap, at laging may fallback values ang bawat field
+      const safeData = Array.isArray(data) ? data : [];
+      setLogs(safeData);
     } catch (err: any) {
       console.error("Failed to fetch audit logs:", err);
-      setError(err.message ?? "Failed to load audit logs");
+      setError(err?.message ?? "Failed to load audit logs");
+      setLogs([]); // huwag panatilihin ang stale/corrupt na data
     } finally {
       if (showSpinner) setLoading(false);
     }
@@ -55,15 +66,16 @@ export function AuditLogsPage() {
     return () => clearInterval(interval);
   }, [fetchLogs]);
 
-  const getUserName = (l: any) => l.user?.full_name ?? "System";
-  const getUserEmail = (l: any) => l.user?.email ?? "—";
+  const getUserName = (l: any) => l?.user?.full_name ?? "System";
+  const getUserEmail = (l: any) => l?.user?.email ?? "—";
 
   const filtered = logs.filter((log) => {
+    if (!log) return false;
     const desc = buildDescription(log);
     const matchSearch =
       !search ||
       getUserName(log).toLowerCase().includes(search.toLowerCase()) ||
-      log.module.toLowerCase().includes(search.toLowerCase()) ||
+      (log.module ?? "").toLowerCase().includes(search.toLowerCase()) ||
       desc.toLowerCase().includes(search.toLowerCase());
     const matchAction = actionFilter === "all" || log.action === actionFilter;
     return matchSearch && matchAction;
@@ -72,17 +84,22 @@ export function AuditLogsPage() {
   const paginated = filtered.slice((page - 1) * perPage, page * perPage);
   const totalPages = Math.max(1, Math.ceil(filtered.length / perPage));
 
+  // Kung may binago tayo (search/filter) at lumabas tayo sa valid page range, ibalik sa page 1
+  useEffect(() => {
+    if (page > totalPages) setPage(1);
+  }, [totalPages, page]);
+
   function handleExport() {
     exportToCsv(
       "audit_logs",
       filtered.map((log) => ({
         user: getUserName(log),
         email: getUserEmail(log),
-        action: log.action,
-        module: log.module,
+        action: log?.action ?? "",
+        module: log?.module ?? "",
         description: buildDescription(log),
-        ip_address: log.ip_address ?? "",
-        timestamp: log.created_at ? new Date(log.created_at).toLocaleString() : "",
+        ip_address: log?.ip_address ?? "",
+        timestamp: log?.created_at ? new Date(log.created_at).toLocaleString() : "",
       }))
     );
   }
@@ -109,7 +126,7 @@ export function AuditLogsPage() {
           <input value={search} onChange={(e) => { setSearch(e.target.value); setPage(1); }} placeholder="Search logs..."
             className="w-full pl-9 pr-4 py-2.5 text-sm bg-card border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40" />
         </div>
-        <select value={actionFilter} onChange={(e) => { setActionFilter(e.target.value as AuditAction | "all"); setPage(1); }}
+        <select value={actionFilter} onChange={(e) => { setActionFilter(e.target.value); setPage(1); }}
           className="px-3 py-2.5 text-sm bg-card border border-border rounded-xl focus:outline-none">
           <option value="all">All Actions</option>
           <option value="create">Create</option>
@@ -150,14 +167,20 @@ export function AuditLogsPage() {
                 {paginated.length === 0 && (
                   <tr><td colSpan={6} className="px-5 py-10 text-center text-sm text-muted-foreground">Walang audit log na nahanap.</td></tr>
                 )}
-                {paginated.map((log) => {
-                  const cfg = actionConfig[log.action];
+                {paginated.map((log, idx) => {
+                  if (!log) return null;
+                  const cfg = getActionConfig(log.action);
+                  const nameInitials = getUserName(log)
+                    .split(" ")
+                    .filter(Boolean)
+                    .map((n: string) => n[0])
+                    .join("") || "?";
                   return (
-                    <tr key={log.id} className="hover:bg-muted/20 transition-colors">
+                    <tr key={log.id ?? idx} className="hover:bg-muted/20 transition-colors">
                       <td className="px-5 py-4">
                         <div className="flex items-center gap-3">
                           <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center text-primary font-semibold text-xs">
-                            {getUserName(log).split(" ").map((n: string) => n[0]).join("")}
+                            {nameInitials}
                           </div>
                           <div>
                             <p className="text-sm font-medium text-foreground">{getUserName(log)}</p>
@@ -168,7 +191,7 @@ export function AuditLogsPage() {
                       <td className="px-5 py-4">
                         <span className={`px-2 py-0.5 rounded-full text-xs font-medium capitalize ${cfg.className}`}>{cfg.label}</span>
                       </td>
-                      <td className="px-5 py-4 text-sm text-foreground font-medium">{log.module}</td>
+                      <td className="px-5 py-4 text-sm text-foreground font-medium">{log.module ?? "—"}</td>
                       <td className="px-5 py-4 text-sm text-muted-foreground max-w-[280px] truncate">{buildDescription(log)}</td>
                       <td className="px-5 py-4 text-sm text-muted-foreground font-mono">{log.ip_address ?? "—"}</td>
                       <td className="px-5 py-4 text-sm text-muted-foreground font-mono whitespace-nowrap">

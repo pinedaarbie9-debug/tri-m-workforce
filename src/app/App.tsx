@@ -32,6 +32,11 @@ import { MySchedulePage } from "./pages/portal/MySchedule";
 import { MyProfilePage } from "./pages/portal/MyProfile";
 import { MyNotificationsPage } from "./pages/portal/MyNotifications";
 
+// BAGO — single source of truth ng "sino ang pwedeng makakita ng anong module".
+// Parehong ginagamit ito ng Sidebar.tsx (para itago ang menu) at dito sa
+// App.tsx (para talagang harangan ang URL kahit direktang i-type).
+import { MODULE_ROLES } from "./config/permissions";
+
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
@@ -54,7 +59,12 @@ export default function App() {
               <Routes>
                 <Route path="/login" element={<LoginPage />} />
 
-                {/* Admin / Management area — hindi puwedeng pasukin ng role na "employee" */}
+                {/* Admin / Management area — hindi puwedeng pasukin ng role na "employee".
+                    Ito ang PANGKALAHATANG check lang (naka-login ka ba bilang isa sa
+                    admin/hr_manager/supervisor?). Ang bawat SPECIFIC na module sa loob
+                    nito ay may hiwalay pang MODULE_ROLES check sa ibaba — kaya kahit
+                    naka-login bilang hr_manager (papasok dito), hindi pa rin niya
+                    puwedeng buksan ang /users o /settings kung direktang i-type sa URL. */}
                 <Route
                   element={
                     <ProtectedRoute roles={ADMIN_ROLES}>
@@ -62,21 +72,126 @@ export default function App() {
                     </ProtectedRoute>
                   }
                 >
-                  <Route index element={<DashboardPage />} />
-                  <Route path="employees" element={<EmployeesPage />} />
-                  <Route path="departments" element={<DepartmentsPage />} />
-                  <Route path="attendance" element={<AttendancePage />} />
-                  <Route path="biometric" element={<BiometricPage />} />
-                  <Route path="shifts" element={<ShiftSchedulingPage />} />
-                  <Route path="leave" element={<LeaveManagementPage />} />
-                  <Route path="timesheets" element={<TimesheetsPage />} />
-                  <Route path="analytics" element={<AnalyticsPage />} />
-                  <Route path="reports" element={<ReportsPage />} />
-                  <Route path="notifications" element={<NotificationsPage />} />
-                  <Route path="users" element={<UserManagementPage />} />
-                  <Route path="audit" element={<AuditLogsPage />} />
-                  <Route path="settings" element={<SettingsPage />} />
-                  <Route path="search" element={<SearchResultsPage />} />
+                  <Route
+                    index
+                    element={
+                      <ProtectedRoute roles={MODULE_ROLES["/"]}>
+                        <DashboardPage />
+                      </ProtectedRoute>
+                    }
+                  />
+                  <Route
+                    path="employees"
+                    element={
+                      <ProtectedRoute roles={MODULE_ROLES["/employees"]}>
+                        <EmployeesPage />
+                      </ProtectedRoute>
+                    }
+                  />
+                  <Route
+                    path="departments"
+                    element={
+                      <ProtectedRoute roles={MODULE_ROLES["/departments"]}>
+                        <DepartmentsPage />
+                      </ProtectedRoute>
+                    }
+                  />
+                  <Route
+                    path="attendance"
+                    element={
+                      <ProtectedRoute roles={MODULE_ROLES["/attendance"]}>
+                        <AttendancePage />
+                      </ProtectedRoute>
+                    }
+                  />
+                  <Route
+                    path="biometric"
+                    element={
+                      <ProtectedRoute roles={MODULE_ROLES["/biometric"]}>
+                        <BiometricPage />
+                      </ProtectedRoute>
+                    }
+                  />
+                  <Route
+                    path="shifts"
+                    element={
+                      <ProtectedRoute roles={MODULE_ROLES["/shifts"]}>
+                        <ShiftSchedulingPage />
+                      </ProtectedRoute>
+                    }
+                  />
+                  <Route
+                    path="leave"
+                    element={
+                      <ProtectedRoute roles={MODULE_ROLES["/leave"]}>
+                        <LeaveManagementPage />
+                      </ProtectedRoute>
+                    }
+                  />
+                  <Route
+                    path="timesheets"
+                    element={
+                      <ProtectedRoute roles={MODULE_ROLES["/timesheets"]}>
+                        <TimesheetsPage />
+                      </ProtectedRoute>
+                    }
+                  />
+                  <Route
+                    path="analytics"
+                    element={
+                      <ProtectedRoute roles={MODULE_ROLES["/analytics"]}>
+                        <AnalyticsPage />
+                      </ProtectedRoute>
+                    }
+                  />
+                  <Route
+                    path="reports"
+                    element={
+                      <ProtectedRoute roles={MODULE_ROLES["/reports"]}>
+                        <ReportsPage />
+                      </ProtectedRoute>
+                    }
+                  />
+                  <Route
+                    path="notifications"
+                    element={
+                      <ProtectedRoute roles={MODULE_ROLES["/notifications"]}>
+                        <NotificationsPage />
+                      </ProtectedRoute>
+                    }
+                  />
+                  <Route
+                    path="users"
+                    element={
+                      <ProtectedRoute roles={MODULE_ROLES["/users"]}>
+                        <UserManagementPage />
+                      </ProtectedRoute>
+                    }
+                  />
+                  <Route
+                    path="audit"
+                    element={
+                      <ProtectedRoute roles={MODULE_ROLES["/audit"]}>
+                        <AuditLogsPage />
+                      </ProtectedRoute>
+                    }
+                  />
+                  <Route
+                    path="settings"
+                    element={
+                      <ProtectedRoute roles={MODULE_ROLES["/settings"]}>
+                        <SettingsPage />
+                      </ProtectedRoute>
+                    }
+                  />
+                  <Route
+                    path="search"
+                    element={
+                      <ProtectedRoute roles={MODULE_ROLES["/search"]}>
+                        <SearchResultsPage />
+                      </ProtectedRoute>
+                    }
+                  />
                 </Route>
 
                 {/* Employee Portal — role "employee" lang ang puwede */}

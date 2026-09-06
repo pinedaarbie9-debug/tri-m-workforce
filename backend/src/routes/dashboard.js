@@ -55,10 +55,16 @@ router.get("/stats", async (req, res) => {
 });
 
 // GET /dashboard/recent-activity
-// FIX: gumagamit na ng COALESCE(NULLIF(full_name, ''), CONCAT(first_name, ' ', last_name))
-// para hindi blangko ang pangalan sa Recent Activity kahit blangko ang
-// full_name column ng employee sa database (hal. mga test employee na
-// first_name/last_name lang ang laman).
+// FIX #1: dating direktang e.full_name lang ang ginagamit — kung blangko ang
+// column na iyon sa DB (kadalasan first_name/last_name lang ang naka-fill up),
+// blangko rin ang lumalabas sa Recent Activity feed. Ngayon, gaya ng ibang
+// parte ng app (biometric.js, atbp.), gagamitin ang COALESCE/CONCAT fallback.
+//
+// FIX #2: may label itong "Today's workforce activity log" sa frontend, pero
+// dati ay wala talagang WHERE clause na naghahanap lang ng logs ngayong araw
+// — kaya lumalabas doon ang mga logs kahit galing pa sa nakaraang araw.
+// Idinagdag ang "WHERE DATE(al.timestamp) = CURDATE()" para tumugma talaga
+// sa sinasabi nitong pamagat.
 router.get("/recent-activity", async (req, res) => {
   const rows = await q(`
     SELECT
@@ -71,6 +77,7 @@ router.get("/recent-activity", async (req, res) => {
     FROM attendance_logs al
     JOIN employees e ON e.id = al.employee_id
     LEFT JOIN departments d ON d.id = e.department_id
+    WHERE DATE(al.timestamp) = CURDATE()
     ORDER BY al.timestamp DESC
     LIMIT 6
   `);
@@ -78,10 +85,8 @@ router.get("/recent-activity", async (req, res) => {
 });
 
 // GET /dashboard/live-punch
-// Ibinabalik ang PINAKA-HULING fingerprint scan (method = 'biometric'),
-// kasama ang litrato ng empleyado. Gamitin ito sa isang "Live Punch" widget
-// sa Dashboard na nagpo-poll (hal. every 3-5 seconds) para agad na
-// lumabas ang litrato pagkatapos mag-fingerprint ang isang empleyado sa kiosk.
+// FIX: parehong COALESCE fallback dinagdag dito (dati full_name COALESCE na
+// pero i-verify lang natin na consistent).
 router.get("/live-punch", async (req, res) => {
   const rows = await q(`
     SELECT
