@@ -1,6 +1,8 @@
 import { Router } from "express";
+import crypto from "node:crypto";
 import { q } from "../db.js";
 import { requireAuth } from "../middleware/auth.js";
+import { logAudit } from "../utils/auditlog.js";
 
 const router = Router();
 router.use(requireAuth);
@@ -119,11 +121,18 @@ router.get("/me/face-descriptor", async (req, res) => {
   }
 });
 
-// -----------------------------------------------------------------------
-// Helper: i-check kung may PIN conflict sa ibang employee.
-// `excludeId` — opsyonal, gamitin sa PUT (edit) para hindi mag-conflict
-// sa sarili nitong record.
-// -----------------------------------------------------------------------
+// Helper — kunin ang pangalan ng employee, gagamitin sa audit log
+// oldValues/newValues para may makitang PANGALAN sa Audit Logs page
+// (hindi lang ID).
+async function getEmployeeName(employee_id) {
+  const rows = await q(
+    `SELECT COALESCE(NULLIF(full_name, ''), CONCAT(first_name, ' ', last_name)) AS full_name
+     FROM employees WHERE id = :employee_id`,
+    { employee_id }
+  );
+  return rows[0]?.full_name ?? null;
+}
+
 async function checkPinConflict(credential_id, excludeId = null) {
   if (!credential_id) return null;
   const rows = await q(
@@ -136,13 +145,6 @@ async function checkPinConflict(credential_id, excludeId = null) {
 }
 
 // POST /biometric-credentials — Enroll Device
-//
-// PATAKARAN: isang ACTIVE credential lang kada employee KADA device_type.
-// Ibig sabihin, isang active fingerprint AT isang active face_id ang
-// pwedeng magkasabay sa isang employee, pero hindi dalawang active
-// fingerprint credential. Kung gusto ng admin na palitan ang PIN o litrato,
-// gamitin ang PUT /:id (edit) sa halip na mag-enroll ulit, o i-DELETE muna
-// ang luma.
 router.post("/", async (req, res) => {
   try {
     const { employee_id, device_type, device_name, photo_data, face_descriptor, credential_id } = req.body;
@@ -150,8 +152,6 @@ router.post("/", async (req, res) => {
       return res.status(400).json({ error: "Kailangan ng employee at device type." });
     }
 
-    // CHECK 1: isang active credential lang kada employee kada device_type
-    // (fingerprint man o face_id).
     const existingForEmployee = await q(
       `SELECT id FROM biometric_credentials
        WHERE employee_id = :employee_id AND device_type = :device_type AND is_active = TRUE`,
@@ -164,7 +164,6 @@ router.post("/", async (req, res) => {
       });
     }
 
-    // CHECK 2: hindi dapat magkatabi ang dalawang tao sa iisang Device PIN.
     if (device_type === "fingerprint") {
       const conflictId = await checkPinConflict(credential_id);
       if (conflictId) {
@@ -191,10 +190,19 @@ router.post("/", async (req, res) => {
       await q(`UPDATE employees SET avatar_url = :photo_data WHERE id = :employee_id`, { photo_data, employee_id });
     }
 
-    await q(
-      "INSERT INTO audit_logs (user_id, action, module, record_id, ip_address) VALUES (:uid,'create','biometric_credentials',:rid,:ip)",
-      { uid: req.user.id, rid: id, ip: req.ip }
-    );
+    // FIX: logAudit() na ito (dating raw SQL insert na walang pangalan).
+    // "full_name" ang key na ginagamit dahil ito ang unang hinahanap ng
+    // getRecordLabel() sa AuditLogs.tsx.
+    const employeeName = await getEmployeeName(employee_id);
+    await logAudit({
+      userId: req.user.id,
+      action: "create",
+      module: "biometric_credentials",
+      recordId: id,
+      newValues: { full_name: employeeName, device_type, credential_id: credential_id || null },
+      ip: req.ip,
+    });
+
     res.status(201).json({ id });
   } catch (err) {
     console.error("POST /biometric-credentials error:", err);
@@ -202,13 +210,7 @@ router.post("/", async (req, res) => {
   }
 });
 
-// -----------------------------------------------------------------------
 // PUT /biometric-credentials/:id — EDIT
-// Gamitin ito para palitan ang Device PIN, device_name, litrato, o
-// face_descriptor ng isang existing credential — imbes na mag-enroll
-// ng bago. Hindi ginagalaw ang employee_id o device_type dito (kung
-// gusto palitan ang device_type, mag-delete at mag-enroll ulit).
-// -----------------------------------------------------------------------
 router.put("/:id", async (req, res) => {
   try {
     const { id } = req.params;
@@ -220,8 +222,6 @@ router.put("/:id", async (req, res) => {
     }
     const current = rows[0];
 
-    // I-check ang PIN conflict lang kung may binagong credential_id at
-    // fingerprint ang device_type.
     if (current.device_type === "fingerprint" && credential_id && credential_id !== current.credential_id) {
       const conflictId = await checkPinConflict(credential_id, id);
       if (conflictId) {
@@ -254,10 +254,19 @@ router.put("/:id", async (req, res) => {
       });
     }
 
-    await q(
-      "INSERT INTO audit_logs (user_id, action, module, record_id, ip_address) VALUES (:uid,'update','biometric_credentials',:rid,:ip)",
-      { uid: req.user.id, rid: id, ip: req.ip }
-    );
+    // FIX: logAudit() na may tamang action = "update" (dati raw SQL, tama
+    // na dati ang action name pero walang pangalan).
+    const employeeName = await getEmployeeName(current.employee_id);
+    await logAudit({
+      userId: req.user.id,
+      action: "update",
+      module: "biometric_credentials",
+      recordId: id,
+      oldValues: { full_name: employeeName, device_type: current.device_type, credential_id: current.credential_id },
+      newValues: { full_name: employeeName, device_type: current.device_type, credential_id: credential_id ?? current.credential_id },
+      ip: req.ip,
+    });
+
     res.json({ success: true });
   } catch (err) {
     console.error("PUT /biometric-credentials/:id error:", err);
@@ -265,25 +274,25 @@ router.put("/:id", async (req, res) => {
   }
 });
 
-// -----------------------------------------------------------------------
-// DELETE /biometric-credentials/:id — DEACTIVATE (soft delete)
-// Hindi natin tinatanggal nang tuluyan ang row (para may audit trail pa
-// rin), sa halip ay ise-set na lang na is_active = FALSE. Pagkatapos
-// nito, pwede nang mag-enroll ulit ang parehong employee sa parehong
-// device_type dahil wala nang "active" credential na naka-block.
+// DELETE /biometric-credentials/:id — DEACTIVATE (soft delete) o HARD delete
 //
-// Kung gusto talaga ng HARD delete (permanenteng tanggalin ang row),
-// idagdag ang query param na ?hard=true.
-// -----------------------------------------------------------------------
+// FIX: dati, ang action na naka-log ay "deactivate" — hindi ito kilala ng
+// frontend (AuditLogs.tsx actionConfig), kaya lumalabas na "Unknown" doon.
+// Ngayon, "delete" na palagi ang naka-log bilang ACTION (tumutugma sa
+// itsura ng ibang modules), pero ang uri ng pagtanggal (permanente o
+// naka-deactivate lang) ay nakalagay sa newValues.deletion_type — kaya
+// hindi nawawala ang detalyeng iyon, nasa loob lang ito ng snapshot data
+// imbes na maging hiwalay/di-kilalang action type.
 router.delete("/:id", async (req, res) => {
   try {
     const { id } = req.params;
     const hard = req.query.hard === "true";
 
-    const rows = await q("SELECT id FROM biometric_credentials WHERE id = :id", { id });
+    const rows = await q("SELECT * FROM biometric_credentials WHERE id = :id", { id });
     if (!rows[0]) {
       return res.status(404).json({ error: "Hindi nahanap ang credential." });
     }
+    const current = rows[0];
 
     if (hard) {
       await q("DELETE FROM biometric_credentials WHERE id = :id", { id });
@@ -291,10 +300,21 @@ router.delete("/:id", async (req, res) => {
       await q("UPDATE biometric_credentials SET is_active = FALSE WHERE id = :id", { id });
     }
 
-    await q(
-      "INSERT INTO audit_logs (user_id, action, module, record_id, ip_address) VALUES (:uid,:action,'biometric_credentials',:rid,:ip)",
-      { uid: req.user.id, action: hard ? "delete" : "deactivate", rid: id, ip: req.ip }
-    );
+    const employeeName = await getEmployeeName(current.employee_id);
+    await logAudit({
+      userId: req.user.id,
+      action: "delete",
+      module: "biometric_credentials",
+      recordId: id,
+      oldValues: {
+        full_name: employeeName,
+        device_type: current.device_type,
+        credential_id: current.credential_id,
+        deletion_type: hard ? "permanent" : "deactivated",
+      },
+      ip: req.ip,
+    });
+
     res.json({ success: true, hard });
   } catch (err) {
     console.error("DELETE /biometric-credentials/:id error:", err);

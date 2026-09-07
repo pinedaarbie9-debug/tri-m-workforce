@@ -52,6 +52,12 @@ export const api = {
   createEmployee: (data: any) => request<{ id: string }>("/employees", { method: "POST", body: JSON.stringify(data) }),
   updateEmployee: (id: string, data: any) => request<{ ok: true }>(`/employees/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
   deleteEmployee: (id: string) => request<{ ok: true }>(`/employees/${id}`, { method: "DELETE" }),
+  // BAGO — Recently Deleted / Recycle Bin para sa employees.
+  // Ang deleteEmployee sa itaas ay soft-delete na ngayon sa backend (deleted_at),
+  // kaya narito ang mga endpoint para makita at ma-restore ang mga na-delete.
+  getDeletedEmployees: () => request<any[]>("/employees/trash"),
+  restoreEmployee: (id: string) => request<{ ok: true }>(`/employees/${id}/restore`, { method: "POST" }),
+  permanentlyDeleteEmployee: (id: string) => request<{ ok: true }>(`/employees/${id}/permanent`, { method: "DELETE" }),
 
   // ---- Departments ----
   getDepartments: () => request<any[]>("/departments"),

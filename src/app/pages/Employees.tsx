@@ -30,12 +30,6 @@ function getDeptName(emp: Employee): string {
   return emp.department_id ?? "—";
 }
 
-// Ginagawa ang susunod na Employee ID gamit ang format na EMP-{taon}-{sequence},
-// hal. EMP-2026-001, EMP-2026-002... Tinitignan lang ang mga existing code na
-// tumutugma sa format na ito PARA SA KASALUKUYANG TAON — kaya kahit may mga
-// legacy/manual IDs tulad ng "415265" o "EMP-001" sa listahan, hindi sila
-// nakakasira sa pag-increment, basta't magsisimula lang ulit sa 001 kada
-// bagong taon.
 function generateEmployeeCode(employees: Employee[]): string {
   const year = new Date().getFullYear();
   const prefix = `EMP-${year}-`;
@@ -82,6 +76,15 @@ export function EmployeesPage() {
   const [form, setForm] = useState(emptyForm);
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
+
+  // BAGO — Edit modal state. Hiwalay sa "Add" form dahil hindi na dapat
+  // baguhin ang employee_code pagka-edit, at "PATCH" ang gagamitin sa
+  // halip na "POST".
+  const [showEditModal, setShowEditModal] = useState(false);
+  const [editingEmployee, setEditingEmployee] = useState<Employee | null>(null);
+  const [editForm, setEditForm] = useState(emptyForm);
+  const [editSaving, setEditSaving] = useState(false);
+  const [editError, setEditError] = useState<string | null>(null);
 
   const fetchEmployees = useCallback(async (showSpinner = true) => {
     if (showSpinner) setLoading(true);
@@ -161,6 +164,71 @@ export function EmployeesPage() {
     } finally {
       setSaving(false);
     }
+  }
+
+  // BAGO — buksan ang Edit modal, i-preload ang laman ng form base sa
+  // pinili sa dropdown ("Edit" menu item).
+  function openEditModal(emp: Employee) {
+    setEditingEmployee(emp);
+    setEditForm({
+      employee_code: emp.employee_code ?? "",
+      first_name: emp.first_name ?? "",
+      last_name: emp.last_name ?? "",
+      email: emp.email ?? "",
+      phone: emp.phone ?? "",
+      job_title: emp.job_title ?? "",
+      department_id: emp.department_id ?? "",
+      employment_type: emp.employment_type,
+      status: emp.status,
+      hire_date: emp.hire_date ?? "",
+    });
+    setEditError(null);
+    setShowEditModal(true);
+  }
+
+  function closeEditModal() {
+    setShowEditModal(false);
+    setEditingEmployee(null);
+  }
+
+  // BAGO — i-save ang binagong impormasyon gamit ang PATCH /employees/:id
+  // (existing na endpoint sa backend, existing na rin ang api.updateEmployee()).
+  async function handleEditEmployee(e: React.FormEvent) {
+    e.preventDefault();
+    setEditError(null);
+    if (!editingEmployee) return;
+    if (!editForm.first_name.trim() || !editForm.last_name.trim() || !editForm.email.trim()) {
+      setEditError("Kailangan ng First Name, Last Name, at Email.");
+      return;
+    }
+    setEditSaving(true);
+    try {
+      await api.updateEmployee(editingEmployee.id, {
+        first_name: editForm.first_name,
+        last_name: editForm.last_name,
+        email: editForm.email,
+        phone: editForm.phone,
+        job_title: editForm.job_title,
+        department_id: editForm.department_id || null,
+        employment_type: editForm.employment_type,
+        status: editForm.status,
+        hire_date: editForm.hire_date || null,
+      });
+      closeEditModal();
+      fetchEmployees(false);
+    } catch (err: any) {
+      setEditError(err.message ?? "Nabigo ang pag-update ng empleyado.");
+    } finally {
+      setEditSaving(false);
+    }
+  }
+
+  // BAGO — "Send Email": binubuksan ang default mail client ng device
+  // (Gmail/Outlook/Mail app, alinman ang naka-set as default), naka-preload
+  // na ang "To" address. Walang kailangang bagong backend endpoint dito —
+  // ang browser/OS mismo ang bahalang magbukas ng tamang app.
+  function handleSendEmail(emp: Employee) {
+    window.location.href = `mailto:${emp.email}`;
   }
 
   return (
@@ -274,8 +342,10 @@ export function EmployeesPage() {
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end">
                           <DropdownMenuItem onClick={() => setSelected(emp)}><Eye className="w-3.5 h-3.5 mr-2" /> View Profile</DropdownMenuItem>
-                          <DropdownMenuItem><Edit2 className="w-3.5 h-3.5 mr-2" /> Edit</DropdownMenuItem>
-                          <DropdownMenuItem><Mail className="w-3.5 h-3.5 mr-2" /> Send Email</DropdownMenuItem>
+                          {/* FIX: dati walang onClick, kaya walang nangyayari kapag pinindot */}
+                          <DropdownMenuItem onClick={() => openEditModal(emp)}><Edit2 className="w-3.5 h-3.5 mr-2" /> Edit</DropdownMenuItem>
+                          {/* FIX: dati walang onClick, kaya walang nangyayari kapag pinindot */}
+                          <DropdownMenuItem onClick={() => handleSendEmail(emp)}><Mail className="w-3.5 h-3.5 mr-2" /> Send Email</DropdownMenuItem>
                           <DropdownMenuItem
                             className="text-destructive focus:text-destructive"
                             onClick={async () => { await api.deleteEmployee(emp.id); fetchEmployees(); }}
@@ -307,6 +377,7 @@ export function EmployeesPage() {
         </div>
       )}
 
+      {/* View Profile modal — walang binago */}
       <Dialog open={Boolean(selected)} onOpenChange={() => setSelected(null)}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader><DialogTitle>Employee Profile</DialogTitle></DialogHeader>
@@ -337,6 +408,7 @@ export function EmployeesPage() {
         </DialogContent>
       </Dialog>
 
+      {/* Add Employee modal — walang binago */}
       <Dialog open={showAddModal} onOpenChange={setShowAddModal}>
         <DialogContent className="sm:max-w-md max-h-[85vh] overflow-y-auto">
           <DialogHeader><DialogTitle>Add Employee</DialogTitle></DialogHeader>
@@ -438,6 +510,109 @@ export function EmployeesPage() {
               <button type="button" onClick={() => setShowAddModal(false)} className="px-4 py-2 text-sm rounded-lg border border-border hover:bg-muted/50 transition-colors">Cancel</button>
               <button type="submit" disabled={saving} className="px-4 py-2 text-sm bg-primary text-white rounded-lg hover:bg-primary/90 disabled:opacity-60 transition-colors">
                 {saving ? "Saving..." : "Add Employee"}
+              </button>
+            </div>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* BAGO — Edit Employee modal. Katulad ng Add modal pero: (1) hindi na
+          nababago ang Employee ID, ipinapakita lang bilang read-only info;
+          (2) PATCH ang gagamitin sa halip na POST; (3) editForm/editSaving/
+          editError ang ginagamit imbes na form/saving/formError, para hindi
+          nagkaka-conflict sa Add modal kung sakaling pareho silang bukas
+          (hindi naman dapat mangyari sa normal na paggamit). */}
+      <Dialog open={showEditModal} onOpenChange={(open) => { if (!open) closeEditModal(); }}>
+        <DialogContent className="sm:max-w-md max-h-[85vh] overflow-y-auto">
+          <DialogHeader><DialogTitle>Edit Employee</DialogTitle></DialogHeader>
+          <form onSubmit={handleEditEmployee} className="space-y-4">
+            {editError && <div className="p-2.5 bg-destructive/10 border border-destructive/20 rounded-lg text-sm text-destructive">{editError}</div>}
+
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium text-foreground">Employee ID</label>
+              <input
+                value={editForm.employee_code}
+                readOnly
+                className="w-full px-3.5 py-2.5 rounded-lg border border-border bg-muted/40 text-sm text-muted-foreground font-mono cursor-not-allowed"
+              />
+              <p className="text-xs text-muted-foreground">Hindi na mababago ang Employee ID pagkatapos ma-create.</p>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <label className="text-sm font-medium text-foreground">First Name</label>
+                <input value={editForm.first_name} onChange={(e) => setEditForm({ ...editForm, first_name: e.target.value })}
+                  className="w-full px-3.5 py-2.5 rounded-lg border border-border bg-input-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/20" />
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-sm font-medium text-foreground">Last Name</label>
+                <input value={editForm.last_name} onChange={(e) => setEditForm({ ...editForm, last_name: e.target.value })}
+                  className="w-full px-3.5 py-2.5 rounded-lg border border-border bg-input-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/20" />
+              </div>
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium text-foreground">Email</label>
+              <input type="email" value={editForm.email} onChange={(e) => setEditForm({ ...editForm, email: e.target.value })}
+                className="w-full px-3.5 py-2.5 rounded-lg border border-border bg-input-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/20" />
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium text-foreground">Phone (optional)</label>
+              <input value={editForm.phone} onChange={(e) => setEditForm({ ...editForm, phone: e.target.value })}
+                className="w-full px-3.5 py-2.5 rounded-lg border border-border bg-input-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/20" placeholder="09xxxxxxxxx" />
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium text-foreground">Job Title</label>
+              <input value={editForm.job_title} onChange={(e) => setEditForm({ ...editForm, job_title: e.target.value })}
+                className="w-full px-3.5 py-2.5 rounded-lg border border-border bg-input-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/20" />
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium text-foreground">Department (optional)</label>
+              <select value={editForm.department_id} onChange={(e) => setEditForm({ ...editForm, department_id: e.target.value })}
+                className="w-full px-3.5 py-2.5 rounded-lg border border-border bg-input-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/20">
+                <option value="">Wala</option>
+                {departments.map((d) => (
+                  <option key={d.id} value={d.id}>{d.name}</option>
+                ))}
+              </select>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <label className="text-sm font-medium text-foreground">Employment Type</label>
+                <select value={editForm.employment_type} onChange={(e) => setEditForm({ ...editForm, employment_type: e.target.value as EmploymentType })}
+                  className="w-full px-3.5 py-2.5 rounded-lg border border-border bg-input-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/20">
+                  <option value="full_time">Full Time</option>
+                  <option value="part_time">Part Time</option>
+                  <option value="contract">Contract</option>
+                  <option value="intern">Intern</option>
+                </select>
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-sm font-medium text-foreground">Status</label>
+                <select value={editForm.status} onChange={(e) => setEditForm({ ...editForm, status: e.target.value as EmployeeStatus })}
+                  className="w-full px-3.5 py-2.5 rounded-lg border border-border bg-input-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/20">
+                  <option value="active">Active</option>
+                  <option value="on_leave">On Leave</option>
+                  <option value="inactive">Inactive</option>
+                  <option value="terminated">Terminated</option>
+                </select>
+              </div>
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium text-foreground">Hire Date (optional)</label>
+              <input type="date" value={editForm.hire_date} onChange={(e) => setEditForm({ ...editForm, hire_date: e.target.value })}
+                className="w-full px-3.5 py-2.5 rounded-lg border border-border bg-input-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/20" />
+            </div>
+
+            <div className="flex justify-end gap-2 pt-2">
+              <button type="button" onClick={closeEditModal} className="px-4 py-2 text-sm rounded-lg border border-border hover:bg-muted/50 transition-colors">Cancel</button>
+              <button type="submit" disabled={editSaving} className="px-4 py-2 text-sm bg-primary text-white rounded-lg hover:bg-primary/90 disabled:opacity-60 transition-colors">
+                {editSaving ? "Saving..." : "I-save ang Changes"}
               </button>
             </div>
           </form>

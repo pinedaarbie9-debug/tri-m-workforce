@@ -23,6 +23,7 @@ import { UserManagementPage } from "./pages/UserManagement";
 import { AuditLogsPage } from "./pages/AuditLogs";
 import { SettingsPage } from "./pages/Settings";
 import { SearchResultsPage } from "./pages/SearchResults";
+import { RecentlyDeletedEmployeesPage } from "./pages/RecentlyDeletedEmployees";
 
 // Employee Portal pages
 import { MyDashboardPage } from "./pages/portal/MyDashboard";
@@ -85,6 +86,18 @@ export default function App() {
                     element={
                       <ProtectedRoute roles={MODULE_ROLES["/employees"]}>
                         <EmployeesPage />
+                      </ProtectedRoute>
+                    }
+                  />
+                  {/* BAGO — Recently Deleted / Recycle Bin. Ginagamit ang parehong
+                      MODULE_ROLES["/employees"] permission dahil parte lang ito ng
+                      Employees module — kung sino ang makakapag-delete ay dapat
+                      makapag-restore rin. */}
+                  <Route
+                    path="employees/trash"
+                    element={
+                      <ProtectedRoute roles={MODULE_ROLES["/employees"]}>
+                        <RecentlyDeletedEmployeesPage />
                       </ProtectedRoute>
                     }
                   />

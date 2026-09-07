@@ -17,9 +17,35 @@ const actionConfig: Record<string, { label: string; className: string }> = {
 
 const fallbackActionConfig = { label: "Unknown", className: "bg-gray-100 text-gray-500" };
 
+const roleBadgeConfig: Record<string, string> = {
+  admin: "bg-purple-100 text-purple-700",
+  hr_manager: "bg-blue-100 text-blue-700",
+  supervisor: "bg-amber-100 text-amber-700",
+  employee: "bg-gray-100 text-gray-600",
+};
+const roleLabels: Record<string, string> = {
+  admin: "Admin",
+  hr_manager: "HR Manager",
+  supervisor: "Supervisor",
+  employee: "Employee",
+};
+
 function getActionConfig(action: unknown) {
   if (typeof action === "string" && actionConfig[action]) return actionConfig[action];
   return fallbackActionConfig;
+}
+
+function getRecordLabel(log: any): string | null {
+  const snapshot = log?.new_values ?? log?.old_values;
+  if (!snapshot || typeof snapshot !== "object") return null;
+  return (
+    snapshot.full_name ??
+    snapshot.name ??
+    snapshot.employee_code ??
+    snapshot.email ??
+    snapshot.key ??
+    null
+  );
 }
 
 function buildDescription(log: any): string {
@@ -27,8 +53,14 @@ function buildDescription(log: any): string {
   const moduleName = log?.module ?? "system";
   if (log?.action === "login") return "Successful login";
   if (log?.action === "logout") return "User logged out";
-  if (log?.record_id) return `${action}d record in ${moduleName} (#${String(log.record_id).slice(0, 8)})`;
-  return `${action}d in ${moduleName}`;
+
+  const name = getRecordLabel(log);
+  const shortId = log?.record_id ? `#${String(log.record_id).slice(0, 8)}` : null;
+
+  if (name && shortId) return `${action}d "${name}" sa ${moduleName} (${shortId})`;
+  if (name) return `${action}d "${name}" sa ${moduleName}`;
+  if (shortId) return `${action}d record sa ${moduleName} (${shortId})`;
+  return `${action}d sa ${moduleName}`;
 }
 
 const POLL_MS = 20000;
@@ -48,13 +80,12 @@ export function AuditLogsPage() {
     setError(null);
     try {
       const data = await api.getAuditLogs();
-      // Defensive: siguraduhing array talaga ang natanggap, at laging may fallback values ang bawat field
       const safeData = Array.isArray(data) ? data : [];
       setLogs(safeData);
     } catch (err: any) {
       console.error("Failed to fetch audit logs:", err);
       setError(err?.message ?? "Failed to load audit logs");
-      setLogs([]); // huwag panatilihin ang stale/corrupt na data
+      setLogs([]);
     } finally {
       if (showSpinner) setLoading(false);
     }
@@ -68,6 +99,7 @@ export function AuditLogsPage() {
 
   const getUserName = (l: any) => l?.user?.full_name ?? "System";
   const getUserEmail = (l: any) => l?.user?.email ?? "—";
+  const getUserRole = (l: any) => l?.user?.role ?? null;
 
   const filtered = logs.filter((log) => {
     if (!log) return false;
@@ -84,19 +116,26 @@ export function AuditLogsPage() {
   const paginated = filtered.slice((page - 1) * perPage, page * perPage);
   const totalPages = Math.max(1, Math.ceil(filtered.length / perPage));
 
-  // Kung may binago tayo (search/filter) at lumabas tayo sa valid page range, ibalik sa page 1
   useEffect(() => {
     if (page > totalPages) setPage(1);
   }, [totalPages, page]);
 
+  // FIX: hiwalay na "record_name" at "record_id" na columns sa CSV export —
+  // dati, nasa loob lang ito ng "description" text (parehong nakadikit sa
+  // isang column), hindi madaling i-sort/i-filter sa Excel/Google Sheets.
+  // Ang tabular na page mismo (UI) ay hindi na ginalaw — doon ay okay lang
+  // na naka-combine sa Description column.
   function handleExport() {
     exportToCsv(
       "audit_logs",
       filtered.map((log) => ({
         user: getUserName(log),
         email: getUserEmail(log),
+        role: getUserRole(log) ?? "",
         action: log?.action ?? "",
         module: log?.module ?? "",
+        record_name: getRecordLabel(log) ?? "",
+        record_id: log?.record_id ?? "",
         description: buildDescription(log),
         ip_address: log?.ip_address ?? "",
         timestamp: log?.created_at ? new Date(log.created_at).toLocaleString() : "",
@@ -183,7 +222,14 @@ export function AuditLogsPage() {
                             {nameInitials}
                           </div>
                           <div>
-                            <p className="text-sm font-medium text-foreground">{getUserName(log)}</p>
+                            <div className="flex items-center gap-1.5">
+                              <p className="text-sm font-medium text-foreground">{getUserName(log)}</p>
+                              {getUserRole(log) && (
+                                <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${roleBadgeConfig[getUserRole(log)] ?? "bg-gray-100 text-gray-500"}`}>
+                                  {roleLabels[getUserRole(log)] ?? getUserRole(log)}
+                                </span>
+                              )}
+                            </div>
                             <p className="text-xs text-muted-foreground">{getUserEmail(log)}</p>
                           </div>
                         </div>
@@ -192,7 +238,9 @@ export function AuditLogsPage() {
                         <span className={`px-2 py-0.5 rounded-full text-xs font-medium capitalize ${cfg.className}`}>{cfg.label}</span>
                       </td>
                       <td className="px-5 py-4 text-sm text-foreground font-medium">{log.module ?? "—"}</td>
-                      <td className="px-5 py-4 text-sm text-muted-foreground max-w-[280px] truncate">{buildDescription(log)}</td>
+                      <td className="px-5 py-4 text-sm text-muted-foreground max-w-[280px] truncate" title={buildDescription(log)}>
+                        {buildDescription(log)}
+                      </td>
                       <td className="px-5 py-4 text-sm text-muted-foreground font-mono">{log.ip_address ?? "—"}</td>
                       <td className="px-5 py-4 text-sm text-muted-foreground font-mono whitespace-nowrap">
                         {log.created_at ? new Date(log.created_at).toLocaleString() : "—"}
