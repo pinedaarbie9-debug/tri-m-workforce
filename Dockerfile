@@ -6,12 +6,9 @@ WORKDIR /app
 # para available na agad ang buong repo structure kasama ang backend/ folder.
 COPY . .
 
-# I-install ang frontend dependencies (may cache mount para mas mabilis
-# sa susunod na builds - hindi na kailangan i-download ulit lahat) at i-build
-RUN --mount=type=cache,target=/root/.npm,sharing=locked npm ci
-RUN npm run build
-
-# I-install ang backend dependencies (may cache mount din)
+# HINDI na natin kailangan pang i-build ang frontend dito - naka-commit na
+# ang dist/ folder sa repo (pre-built na). Ang kailangan lang i-install ay
+# ang backend dependencies.
 RUN --mount=type=cache,target=/root/.npm,sharing=locked cd backend && npm ci
 
 EXPOSE 3000
