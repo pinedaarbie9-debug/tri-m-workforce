@@ -14,6 +14,7 @@ router.get("/", async (req, res) => {
     const rows = await q(`
       SELECT
         u.id, u.full_name, u.email, u.role, u.status, u.last_login, u.created_at,
+        u.employee_id,
         d.name AS department
       FROM users u
       LEFT JOIN employees e ON e.id = u.employee_id
@@ -99,11 +100,44 @@ router.patch("/:id", async (req, res) => {
       }
     }
 
-    const before = await q("SELECT full_name, role FROM users WHERE id = :id", { id: req.params.id });
+    // FIX: kunin din ang employee_id at status bago i-update, kailangan natin
+    // ito para malaman kung kailangan bang i-restore ang naka-link na employee.
+    const before = await q(
+      "SELECT full_name, role, status, employee_id FROM users WHERE id = :id",
+      { id: req.params.id }
+    );
     if (!before[0]) return res.status(404).json({ error: "User not found." });
 
     const setClause = Object.keys(updates).map((k) => `${k} = :${k}`).join(", ");
     await q(`UPDATE users SET ${setClause} WHERE id = :id`, { ...updates, id: req.params.id });
+
+    // FIX: kapag "active" ang bagong status ng user AT may naka-link na employee_id
+    // (ang bago kung binago sa parehong request, o ang luma kung hindi ginalaw),
+    // i-restore din natin ang linked employee record kung na-soft-delete ito dati.
+    // Ito ang gustong behavior: "pag ni-activate ko ang account, babalik din ang
+    // employee sa Employees page."
+    const finalEmployeeId = updates.employee_id !== undefined ? updates.employee_id : before[0].employee_id;
+    const becomingActive = updates.status === "active" && before[0].status !== "active";
+
+    if (becomingActive && finalEmployeeId) {
+      const empRows = await q(
+        "SELECT id, full_name, deleted_at FROM employees WHERE id = :id",
+        { id: finalEmployeeId }
+      );
+      if (empRows[0] && empRows[0].deleted_at) {
+        await q("UPDATE employees SET deleted_at = NULL WHERE id = :id", { id: finalEmployeeId });
+
+        await logAudit({
+          userId: req.user.id,
+          action: "update",
+          module: "employees",
+          recordId: finalEmployeeId,
+          oldValues: { status: "deleted" },
+          newValues: { full_name: empRows[0].full_name, status: "restored (auto via user activation)" },
+          ip: req.ip,
+        });
+      }
+    }
 
     await logAudit({
       userId: req.user.id,

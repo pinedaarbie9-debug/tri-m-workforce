@@ -7,9 +7,32 @@ import { logAudit } from "../utils/auditlog.js";
 const router = Router();
 router.use(requireAuth);
 
+// Simpleng role-guard helper. Tanging admin/HR ang puwedeng mag-enroll,
+// mag-edit, o mag-delete ng biometric credentials. Basta naka-login lang
+// dati (kahit employee role) puwede — mapanganib iyon.
+function requireRole(...roles) {
+  return (req, res, next) => {
+    if (!req.user?.role || !roles.includes(req.user.role)) {
+      return res.status(403).json({ error: "Wala kang pahintulot para sa aksyong ito." });
+    }
+    next();
+  };
+}
+
+// -----------------------------------------------------------------------
 // GET /biometric-credentials
+// -----------------------------------------------------------------------
+// FIX (ito yung dating kulang): kinukuha na lang ang mga AKTIBONG
+// credentials by default — kaya kapag na-delete/na-deactivate mo ang isa,
+// AGAD siyang mawawala dito sa Biometric Auth listahan. Ang audit_logs
+// entry niya ay hiwalay na table, kaya hindi ito naapektuhan — permanente
+// pa rin doon ang history.
+//
+// Kung minsan gusto pa ring makita ang mga naka-deactivate (hal. para sa
+// pag-audit o restore later), idagdag ang ?include_inactive=true sa URL.
 router.get("/", async (req, res) => {
   try {
+    const includeInactive = req.query.include_inactive === "true";
     const rows = await q(`
       SELECT
         b.*,
@@ -21,6 +44,7 @@ router.get("/", async (req, res) => {
         ) AS employee
       FROM biometric_credentials b
       JOIN employees e ON e.id = b.employee_id
+      ${includeInactive ? "" : "WHERE b.is_active = TRUE"}
       ORDER BY b.registered_at DESC
     `);
     res.json(rows.map((r) => ({ ...r, employee: JSON.parse(r.employee), is_active: !!r.is_active })));
@@ -121,6 +145,25 @@ router.get("/me/face-descriptor", async (req, res) => {
   }
 });
 
+// -----------------------------------------------------------------------
+// GET /biometric-credentials/generate-pin
+// -----------------------------------------------------------------------
+// Tinatawag ito ng frontend PAGBUKAS ng Enroll modal (kapag device_type
+// === "fingerprint") para makuha ang susunod na available at hindi-
+// nagko-conflict na PIN — hindi na kailangang mag-type ang admin.
+router.get("/generate-pin", requireRole("admin", "hr_manager"), async (req, res) => {
+  try {
+    const pin = await generateUniquePin();
+    res.json({ credential_id: pin });
+  } catch (err) {
+    if (err.message === "PIN_GENERATION_FAILED") {
+      return res.status(500).json({ error: "Hindi makagawa ng natatanging PIN sa ngayon. Subukan ulit." });
+    }
+    console.error("GET /biometric-credentials/generate-pin error:", err);
+    res.status(500).json({ error: err.sqlMessage ?? err.message ?? "Failed to generate PIN" });
+  }
+});
+
 // Helper — kunin ang pangalan ng employee, gagamitin sa audit log
 // oldValues/newValues para may makitang PANGALAN sa Audit Logs page
 // (hindi lang ID).
@@ -133,6 +176,11 @@ async function getEmployeeName(employee_id) {
   return rows[0]?.full_name ?? null;
 }
 
+// FIX: dati, ang WHERE clause dito ay kinukuha lang ang mga AKTIBONG
+// (is_active = TRUE) fingerprint rows para i-check ang PIN conflict. Ito
+// ay TAMA — sinasadya ito, dahil kung na-deactivate mo na ang lumang PIN
+// "1001", dapat puwede na itong i-reuse ng bagong enrollment. Walang
+// binago dito, nilagay ko lang itong comment para malinaw kung bakit.
 async function checkPinConflict(credential_id, excludeId = null) {
   if (!credential_id) return null;
   const rows = await q(
@@ -144,12 +192,34 @@ async function checkPinConflict(credential_id, excludeId = null) {
   return rows.length ? rows[0].id : null;
 }
 
+// Helper na ginagamit ng /generate-pin endpoint AT ng enroll endpoint
+// (bilang fallback kapag walang PIN na binigay ang frontend). Random
+// 4-digit na PIN, tinitiyak na walang banggaan sa isa pang AKTIBONG
+// fingerprint credential.
+async function generateUniquePin(length = 4) {
+  const min = 10 ** (length - 1);
+  const max = 10 ** length - 1;
+  let pin;
+  let attempts = 0;
+  do {
+    pin = String(Math.floor(min + Math.random() * (max - min + 1)));
+    attempts++;
+    if (attempts > 50) throw new Error("PIN_GENERATION_FAILED");
+  } while (await checkPinConflict(pin));
+  return pin;
+}
+
 // POST /biometric-credentials — Enroll Device
-router.post("/", async (req, res) => {
+router.post("/", requireRole("admin", "hr_manager"), async (req, res) => {
   try {
-    const { employee_id, device_type, device_name, photo_data, face_descriptor, credential_id } = req.body;
+    const { employee_id, device_type } = req.body;
+    let { device_name, photo_data, face_descriptor, credential_id } = req.body;
+
     if (!employee_id || !device_type) {
       return res.status(400).json({ error: "Kailangan ng employee at device type." });
+    }
+    if (!["fingerprint", "face_id", "pin", "card"].includes(device_type)) {
+      return res.status(400).json({ error: "Hindi valid na device type." });
     }
 
     const existingForEmployee = await q(
@@ -165,9 +235,17 @@ router.post("/", async (req, res) => {
     }
 
     if (device_type === "fingerprint") {
-      const conflictId = await checkPinConflict(credential_id);
-      if (conflictId) {
-        return res.status(409).json({ error: `Ginagamit na ang Device PIN "${credential_id}" ng ibang empleyado.` });
+      if (!credential_id || !String(credential_id).trim()) {
+        credential_id = await generateUniquePin();
+      } else {
+        credential_id = String(credential_id).trim();
+        if (!/^[0-9]{3,10}$/.test(credential_id)) {
+          return res.status(400).json({ error: "Ang Device PIN ay dapat 3-10 na numero lamang." });
+        }
+        const conflictId = await checkPinConflict(credential_id);
+        if (conflictId) {
+          return res.status(409).json({ error: `Ginagamit na ang Device PIN "${credential_id}" ng ibang empleyado.` });
+        }
       }
     }
 
@@ -190,9 +268,6 @@ router.post("/", async (req, res) => {
       await q(`UPDATE employees SET avatar_url = :photo_data WHERE id = :employee_id`, { photo_data, employee_id });
     }
 
-    // FIX: logAudit() na ito (dating raw SQL insert na walang pangalan).
-    // "full_name" ang key na ginagamit dahil ito ang unang hinahanap ng
-    // getRecordLabel() sa AuditLogs.tsx.
     const employeeName = await getEmployeeName(employee_id);
     await logAudit({
       userId: req.user.id,
@@ -203,7 +278,7 @@ router.post("/", async (req, res) => {
       ip: req.ip,
     });
 
-    res.status(201).json({ id });
+    res.status(201).json({ id, credential_id });
   } catch (err) {
     console.error("POST /biometric-credentials error:", err);
     res.status(500).json({ error: err.sqlMessage ?? err.message ?? "Failed to enroll device" });
@@ -211,10 +286,11 @@ router.post("/", async (req, res) => {
 });
 
 // PUT /biometric-credentials/:id — EDIT
-router.put("/:id", async (req, res) => {
+router.put("/:id", requireRole("admin", "hr_manager"), async (req, res) => {
   try {
     const { id } = req.params;
-    const { device_name, photo_data, face_descriptor, credential_id, is_active } = req.body;
+    const { device_name, photo_data, face_descriptor, is_active } = req.body;
+    let { credential_id } = req.body;
 
     const rows = await q("SELECT * FROM biometric_credentials WHERE id = :id", { id });
     if (!rows[0]) {
@@ -222,10 +298,16 @@ router.put("/:id", async (req, res) => {
     }
     const current = rows[0];
 
-    if (current.device_type === "fingerprint" && credential_id && credential_id !== current.credential_id) {
-      const conflictId = await checkPinConflict(credential_id, id);
-      if (conflictId) {
-        return res.status(409).json({ error: `Ginagamit na ang Device PIN "${credential_id}" ng ibang empleyado.` });
+    if (current.device_type === "fingerprint" && credential_id !== undefined && credential_id !== current.credential_id) {
+      credential_id = String(credential_id).trim();
+      if (credential_id && !/^[0-9]{3,10}$/.test(credential_id)) {
+        return res.status(400).json({ error: "Ang Device PIN ay dapat 3-10 na numero lamang." });
+      }
+      if (credential_id) {
+        const conflictId = await checkPinConflict(credential_id, id);
+        if (conflictId) {
+          return res.status(409).json({ error: `Ginagamit na ang Device PIN "${credential_id}" ng ibang empleyado.` });
+        }
       }
     }
 
@@ -254,8 +336,6 @@ router.put("/:id", async (req, res) => {
       });
     }
 
-    // FIX: logAudit() na may tamang action = "update" (dati raw SQL, tama
-    // na dati ang action name pero walang pangalan).
     const employeeName = await getEmployeeName(current.employee_id);
     await logAudit({
       userId: req.user.id,
@@ -274,16 +354,52 @@ router.put("/:id", async (req, res) => {
   }
 });
 
+// -----------------------------------------------------------------------
+// DELETE /biometric-credentials/clear-all — Bulk clear
+// -----------------------------------------------------------------------
+// MAHALAGA: kailangan itong nasa ITAAS ng "DELETE /:id" na route sa baba,
+// dahil kung nasa ibaba ito, ituturing ng Express na ":id" ang literal na
+// salitang "clear-all" at hindi na aabot dito.
+router.delete("/clear-all", requireRole("admin"), async (req, res) => {
+  try {
+    const hard = req.query.hard === "true";
+    if (req.query.confirm !== "true") {
+      return res.status(400).json({
+        error: "Kailangan ng ?confirm=true sa request para tuluyang mag-clear ng LAHAT ng credentials.",
+      });
+    }
+
+    const existing = await q("SELECT id FROM biometric_credentials");
+    const affectedCount = existing.length;
+
+    if (hard) {
+      await q("DELETE FROM biometric_credentials");
+    } else {
+      await q("UPDATE biometric_credentials SET is_active = FALSE WHERE is_active = TRUE");
+    }
+
+    await logAudit({
+      userId: req.user.id,
+      action: "delete",
+      module: "biometric_credentials",
+      recordId: null,
+      oldValues: {
+        scope: "ALL_CREDENTIALS",
+        deletion_type: hard ? "permanent" : "deactivated",
+        affected_count: affectedCount,
+      },
+      ip: req.ip,
+    });
+
+    res.json({ success: true, hard, cleared: affectedCount });
+  } catch (err) {
+    console.error("DELETE /biometric-credentials/clear-all error:", err);
+    res.status(500).json({ error: err.sqlMessage ?? err.message ?? "Failed to clear all credentials" });
+  }
+});
+
 // DELETE /biometric-credentials/:id — DEACTIVATE (soft delete) o HARD delete
-//
-// FIX: dati, ang action na naka-log ay "deactivate" — hindi ito kilala ng
-// frontend (AuditLogs.tsx actionConfig), kaya lumalabas na "Unknown" doon.
-// Ngayon, "delete" na palagi ang naka-log bilang ACTION (tumutugma sa
-// itsura ng ibang modules), pero ang uri ng pagtanggal (permanente o
-// naka-deactivate lang) ay nakalagay sa newValues.deletion_type — kaya
-// hindi nawawala ang detalyeng iyon, nasa loob lang ito ng snapshot data
-// imbes na maging hiwalay/di-kilalang action type.
-router.delete("/:id", async (req, res) => {
+router.delete("/:id", requireRole("admin"), async (req, res) => {
   try {
     const { id } = req.params;
     const hard = req.query.hard === "true";

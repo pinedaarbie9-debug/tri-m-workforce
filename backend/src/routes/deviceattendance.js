@@ -1,27 +1,24 @@
 import { Router } from "express";
 import express from "express";
+import crypto from "node:crypto";
 import { q } from "../db.js";
 import { getSettings } from "../settings.js";
 
 const router = Router();
 
 // =============================================================================
-// ADMS / iClock PUSH PROTOCOL — ito ang standard na protocol na ginagamit ng
-// ZKTeco, eSSL, Anviz, at karamihan ng budget fingerprint time-attendance
-// devices para mag-push ng attendance data papunta sa isang server.
-//
-// MAHALAGA: HINDI natin dinadagdag ang requireAuth (JWT) dito dahil ang
-// fingerprint device mismo ang tumatawag sa mga endpoint na ito — hindi ito
-// isang naka-login na user sa browser. Sa isang tunay na SME deployment,
-// ang security dito ay dapat nasa NETWORK LEVEL (hal. ang kiosk device ay
-// nasa parehong LAN/VLAN lang ng server, o naka-firewall papasok mula labas).
-//
-// Kailangan din ng "raw text" body parser dito (hindi JSON) dahil ganito
-// talaga nagpapadala ng attendance logs ang mga device na ito — bilang
-// plain text na naka-tab-separate. Naka-scope lang ito sa router na ito,
-// hindi apektado ang ibang parte ng app na gumagamit pa rin ng express.json().
+// ADMS / iClock PUSH PROTOCOL
+// (parehong paliwanag gaya ng dati)
 // =============================================================================
 router.use(express.text({ type: "*/*", limit: "2mb" }));
+
+const DEVICE_SHARED_SECRET = process.env.DEVICE_SHARED_SECRET || null;
+
+function isAuthorizedDevice(req) {
+  if (!DEVICE_SHARED_SECRET) return true;
+  const provided = req.headers["x-device-key"] || req.query.key;
+  return provided === DEVICE_SHARED_SECRET;
+}
 
 function timeToMinutes(t) {
   if (!t) return null;
@@ -29,24 +26,31 @@ function timeToMinutes(t) {
   return h * 60 + m;
 }
 
-// Hinahanap kung sinong empleyado ang may-ari ng "PIN" na naka-enroll sa
-// fingerprint device. Ang PIN na ito ay nakatago sa `credential_id` column
-// ng biometric_credentials (na-set ng admin noong nag-enroll ng fingerprint
-// credential sa Biometric Auth page).
 async function resolveEmployeeIdFromPin(pin) {
-  const rows = await q(
+  const trimmedPin = String(pin).trim();
+
+  const credRows = await q(
     `SELECT employee_id FROM biometric_credentials
      WHERE device_type = 'fingerprint' AND credential_id = :pin AND is_active = TRUE
      LIMIT 1`,
-    { pin: String(pin) }
+    { pin: trimmedPin }
   );
-  return rows[0]?.employee_id ?? null;
+  if (credRows[0]) {
+    return { employee_id: credRows[0].employee_id, method: "biometric" };
+  }
+
+  const empRows = await q(
+    `SELECT id FROM employees WHERE employee_code = :pin AND status = 'active' LIMIT 1`,
+    { pin: trimmedPin }
+  );
+  if (empRows[0]) {
+    return { employee_id: empRows[0].id, method: "manual" };
+  }
+
+  return { employee_id: null, method: null };
 }
 
-// Parehong logic ng check-in/check-out sa attendance.js, pero ito ang bersyon
-// na tinatawag mula sa fingerprint device push (walang req.user dahil walang
-// naka-login na session dito — device lang ang nag-i-identify ng empleyado).
-async function processPunch(employee_id, dateStr, timeStr, deviceSN) {
+async function processPunch(employee_id, dateStr, timeStr, deviceSN, method) {
   const settings = await getSettings(["late_threshold_minutes", "overtime_threshold_hours"]);
 
   const shiftRows = await q(
@@ -61,55 +65,91 @@ async function processPunch(employee_id, dateStr, timeStr, deviceSN) {
     { employee_id, dateStr }
   );
 
-  let logType;
+  // FIX: kunin ang PINAKAHULING log ng araw na ito para malaman kung ano ang
+  // dapat na SUSUNOD na uri ng punch — hindi lang base sa check_in/check_out
+  // columns (na isang beses lang nagagamit kada araw sa summary row), kundi
+  // sa aktwal na huling naitalang log sa attendance_logs. Dati, pagkatapos
+  // malagyan ng parehong check_in AT check_out ang araw, anumang susunod na
+  // punch ay laging babagsak sa "else" branch at magla-log lang ng
+  // "check_in" nang paulit-ulit nang walang totoong pag-toggle — ito yung
+  // dahilan kung bakit "Checked In" nang "Checked In" nang paulit-ulit.
+  const lastLogRows = await q(
+    `SELECT type FROM attendance_logs
+     WHERE employee_id = :employee_id AND DATE(timestamp) = :dateStr
+     ORDER BY timestamp DESC LIMIT 1`,
+    { employee_id, dateStr }
+  );
+  const lastType = lastLogRows[0]?.type ?? null;
 
-  if (!existing[0] || !existing[0].check_in) {
-    // Walang check-in pa ngayong araw -> ito ang check-in.
-    let status = "present";
-    if (shiftStart) {
-      const lateThreshold = settings.late_threshold_minutes ?? 15;
-      if (timeToMinutes(timeStr) > timeToMinutes(shiftStart) + lateThreshold) status = "late";
-    }
-    if (existing[0]) {
-      await q("UPDATE attendance SET check_in = :t, status = :status WHERE id = :id", {
-        t: timeStr,
-        status,
-        id: existing[0].id,
-      });
-    } else {
+  // Wastong pag-toggle: kung wala pang log ngayong araw O "check_out" ang
+  // huling log, ang susunod ay "check_in". Kung "check_in" ang huling log,
+  // ang susunod ay "check_out". Ganito, gaano man karaming beses mag-punch
+  // sa isang araw (hal. paglabas/pagbalik sa break), tama pa rin ang pag-alternate.
+  const logType = !lastType || lastType === "check_out" ? "check_in" : "check_out";
+
+  if (logType === "check_in") {
+    if (!existing[0]) {
+      // Unang check-in ng araw — gumawa ng bagong attendance summary row.
+      let status = "present";
+      if (shiftStart) {
+        const lateThreshold = settings.late_threshold_minutes ?? 15;
+        if (timeToMinutes(timeStr) > timeToMinutes(shiftStart) + lateThreshold) status = "late";
+      }
       await q(
         `INSERT INTO attendance (id, employee_id, date, check_in, status) VALUES (:id, :employee_id, :dateStr, :t, :status)`,
         { id: crypto.randomUUID(), employee_id, dateStr, t: timeStr, status }
       );
     }
-    logType = "check_in";
-  } else if (!existing[0].check_out) {
-    // May check-in na, wala pang check-out -> ito ang check-out.
-    const inMinutes = timeToMinutes(existing[0].check_in);
+    // FIX: kung may existing row na (ibig sabihin bumalik lang siya mula sa
+    // isang naunang check-out ngayong araw din — hal. galing sa break),
+    // hindi na natin babaguhin ang orihinal na "check_in" ng araw. Nananatili
+    // itong "unang pagpasok", habang ang bagong log lang ang magmamarka na
+    // bumalik siya. Kung gusto mo talagang i-extend/i-reset ang check_out
+    // tuwing bumabalik siya, sabihin mo lang para maidagdag natin.
+  } else {
+    // check_out — i-update ang buod ng araw at i-recompute ang work hours
+    // base sa orihinal na check_in (o sa oras mismo ng punch na ito kung
+    // sa kahit anong dahilan ay walang existing row pa).
+    const referenceCheckIn = existing[0]?.check_in ?? timeStr;
+    const inMinutes = timeToMinutes(referenceCheckIn);
     const outMinutes = timeToMinutes(timeStr);
     const workHours = Math.max(0, (outMinutes - inMinutes) / 60);
     const overtimeThreshold = settings.overtime_threshold_hours ?? 8;
     const overtimeHours = Math.max(0, workHours - overtimeThreshold);
-    await q(
-      "UPDATE attendance SET check_out = :t, work_hours = :wh, overtime_hours = :oh WHERE id = :id",
-      { t: timeStr, wh: workHours.toFixed(2), oh: overtimeHours.toFixed(2), id: existing[0].id }
-    );
-    logType = "check_out";
-  } else {
-    // Kumpleto na ang check_in/check_out ngayong araw. Extra scan na lang ito
-    // (hal. bumalik pumasok pagkatapos mag-out). Huwag nang galawin ang
-    // attendance record, pero i-lo-log pa rin natin bilang audit trail.
-    logType = "check_in";
+
+    if (existing[0]) {
+      await q(
+        "UPDATE attendance SET check_out = :t, work_hours = :wh, overtime_hours = :oh WHERE id = :id",
+        { t: timeStr, wh: workHours.toFixed(2), oh: overtimeHours.toFixed(2), id: existing[0].id }
+      );
+    } else {
+      // Malabong mangyari (check-out bago pa man magkaroon ng check-in row),
+      // pero sakaling mangyari, gumawa pa rin tayo ng row para hindi mawala
+      // ang datos.
+      await q(
+        `INSERT INTO attendance (id, employee_id, date, check_out, work_hours, overtime_hours, status)
+         VALUES (:id, :employee_id, :dateStr, :t, :wh, :oh, 'present')`,
+        {
+          id: crypto.randomUUID(),
+          employee_id,
+          dateStr,
+          t: timeStr,
+          wh: workHours.toFixed(2),
+          oh: overtimeHours.toFixed(2),
+        }
+      );
+    }
   }
 
   await q(
     `INSERT INTO attendance_logs (id, employee_id, timestamp, type, method, device_id)
-     VALUES (:id, :employee_id, :timestamp, :logType, 'biometric', :device_id)`,
+     VALUES (:id, :employee_id, :timestamp, :logType, :method, :device_id)`,
     {
       id: crypto.randomUUID(),
       employee_id,
       timestamp: `${dateStr} ${timeStr}`,
       logType,
+      method: method === "manual" ? "manual" : "biometric",
       device_id: deviceSN ?? "unknown",
     }
   );
@@ -121,6 +161,10 @@ async function processPunch(employee_id, dateStr, timeStr, deviceSN) {
 // 1) HANDSHAKE
 // -----------------------------------------------------------------------
 router.get("/cdata", async (req, res) => {
+  if (!isAuthorizedDevice(req)) {
+    return res.status(403).type("text/plain").send("FORBIDDEN");
+  }
+
   const { SN, table } = req.query;
 
   if (table === "ATTLOG" || table === "OPERLOG") {
@@ -147,6 +191,10 @@ router.get("/cdata", async (req, res) => {
 // 2) ATTENDANCE PUSH
 // -----------------------------------------------------------------------
 router.post("/cdata", async (req, res) => {
+  if (!isAuthorizedDevice(req)) {
+    return res.status(403).type("text/plain").send("FORBIDDEN");
+  }
+
   try {
     const { SN, table } = req.query;
     if (table !== "ATTLOG") {
@@ -157,7 +205,8 @@ router.post("/cdata", async (req, res) => {
     const lines = body
       .split("\n")
       .map((l) => l.trim())
-      .filter(Boolean);
+      .filter(Boolean)
+      .slice(0, 1000); // safety cap laban sa napakalaking push
 
     let processed = 0;
     for (const line of lines) {
@@ -166,15 +215,15 @@ router.post("/cdata", async (req, res) => {
       const timestamp = parts[1];
       if (!pin || !timestamp) continue;
 
-      const employee_id = await resolveEmployeeIdFromPin(pin);
+      const { employee_id, method } = await resolveEmployeeIdFromPin(pin);
       if (!employee_id) {
-        console.warn(`⚠️  Walang empleyadong naka-link sa fingerprint PIN "${pin}" (SN=${SN}). I-check ang Biometric Auth enrollment.`);
+        console.warn(`⚠️  Walang empleyadong naka-link sa PIN/Employee Code "${pin}" (SN=${SN}). I-check ang Biometric Auth enrollment o Employee Code.`);
         continue;
       }
 
       const [dateStr, timeStr] = timestamp.split(" ");
-      const logType = await processPunch(employee_id, dateStr, timeStr, SN);
-      console.log(`✅ ${logType.toUpperCase()} na-log para sa employee_id=${employee_id} (PIN ${pin})`);
+      const logType = await processPunch(employee_id, dateStr, timeStr, SN, method);
+      console.log(`✅ ${logType.toUpperCase()} na-log para sa employee_id=${employee_id} (PIN/Code "${pin}", method=${method})`);
       processed++;
     }
 

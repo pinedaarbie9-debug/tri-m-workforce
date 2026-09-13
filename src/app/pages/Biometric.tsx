@@ -3,7 +3,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import {
   Fingerprint, Smartphone, CreditCard, Eye, Plus, Shield,
   ShieldCheck, ShieldAlert, CheckCircle2, Loader2, Camera, RotateCcw, X,
-  Pencil, Trash2,
+  Pencil, Trash2, RefreshCw, Eraser,
 } from "lucide-react";
 import { motion } from "motion/react";
 import * as faceapi from "face-api.js";
@@ -26,11 +26,15 @@ const deviceColors: Record<string, string> = {
   pin: "text-amber-600 bg-amber-50",
 };
 
-// Device types na gumagamit ng Device PIN / credential_id na text field
-// (imbes na camera). Ito rin ang value na ipapadala bilang credential_id
-// sa POST/PUT — para sa fingerprint device, ito ang PIN na dapat magtugma
-// sa naka-configure sa aktwal na hardware.
-const PIN_BASED_TYPES = ["fingerprint", "card", "pin"];
+// Device types na gumagamit ng Device PIN / credential_id.
+// FIX: hinati natin ito ngayon sa dalawa —
+//  - "fingerprint": AUTO-GENERATED na ng server, read-only sa UI, hindi na
+//    kailangang mag-type ang admin.
+//  - "card" / "pin": manual pa rin dahil galing ito sa PHYSICAL na card/PIN
+//    na binibigay ng employee (walang paraan ito i-auto-generate).
+const AUTO_PIN_TYPES = ["fingerprint"];
+const MANUAL_PIN_TYPES = ["card", "pin"];
+const PIN_BASED_TYPES = [...AUTO_PIN_TYPES, ...MANUAL_PIN_TYPES];
 
 const POLL_MS = 20000;
 const emptyForm = { employee_id: "", device_type: "face_id", device_name: "", credential_id: "" };
@@ -65,9 +69,6 @@ export function BiometricPage() {
 
   // --- Enroll/Edit modal state ---
   const [showEnrollModal, setShowEnrollModal] = useState(false);
-  // BAGO: null = mode na "Enroll" (bagong credential). May value = mode na
-  // "Edit" (ini-edit ang existing credential na ito). Ginagamit din ito para
-  // malaman kung PUT o POST ang tatawagin sa pag-save.
   const [editingCredential, setEditingCredential] = useState<any | null>(null);
   const [form, setForm] = useState(emptyForm);
   const [photoData, setPhotoData] = useState<string | null>(null);
@@ -77,8 +78,15 @@ export function BiometricPage() {
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
 
-  // BAGO: state para sa delete confirmation at deleting spinner per-card
+  // BAGO: state para sa auto-generate ng Device PIN (fingerprint)
+  const [generatingPin, setGeneratingPin] = useState(false);
+  const [pinError, setPinError] = useState<string | null>(null);
+
+  // state para sa delete confirmation at deleting spinner per-card
   const [deletingId, setDeletingId] = useState<string | null>(null);
+
+  // BAGO: state para sa "Clear All Credentials"
+  const [clearingAll, setClearingAll] = useState(false);
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -194,18 +202,35 @@ export function BiometricPage() {
     startCamera();
   }
 
+  // BAGO — humingi ng bagong auto-generated PIN sa server. Ginagamit ito
+  // pagbukas ng Enroll modal kung "fingerprint" ang default type, pagpalit
+  // papuntang "fingerprint", at sa "Regenerate" button.
+  async function requestNewPin() {
+    setGeneratingPin(true);
+    setPinError(null);
+    try {
+      const { credential_id } = await api.generateDevicePin();
+      setForm((f) => ({ ...f, credential_id }));
+    } catch (err: any) {
+      setPinError(err.message ?? "Hindi makagawa ng Device PIN. Subukan ulit.");
+    } finally {
+      setGeneratingPin(false);
+    }
+  }
+
   // Enroll mode: bagong credential
   function openEnrollModal() {
     setEditingCredential(null);
     setForm(emptyForm);
     setFormError(null);
+    setPinError(null);
     setPhotoData(null);
     setFaceDescriptor(null);
     setCameraError(null);
     setShowEnrollModal(true);
   }
 
-  // BAGO — Edit mode: i-load ang existing values ng credential papunta sa form
+  // Edit mode: i-load ang existing values ng credential papunta sa form
   function openEditModal(cred: any) {
     setEditingCredential(cred);
     setForm({
@@ -215,6 +240,7 @@ export function BiometricPage() {
       credential_id: cred.credential_id ?? "",
     });
     setFormError(null);
+    setPinError(null);
     setPhotoData(cred.photo_data ?? null);
     setFaceDescriptor(null); // hindi na natin uulitin ang face detection maliban kung mag-retake
     setCameraError(null);
@@ -228,8 +254,7 @@ export function BiometricPage() {
   }
 
   // Camera dapat bukas lang kapag: face_id ang type, walang photo pa, AT
-  // "Enroll" mode (bago) — o "Edit" mode pero pinili ng user na mag-retake
-  // (photoData naging null muli dahil sa retakePhoto()).
+  // "Enroll" mode (bago) — o "Edit" mode pero pinili ng user na mag-retake.
   useEffect(() => {
     if (showEnrollModal && form.device_type === "face_id" && !photoData) {
       startCamera();
@@ -239,6 +264,22 @@ export function BiometricPage() {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showEnrollModal, form.device_type, photoData]);
+
+  // BAGO: kapag "fingerprint" ang napiling device type habang nasa Enroll
+  // mode (hindi Edit) AT wala pang PIN, awtomatikong humingi ng bagong PIN
+  // sa server — dito nawawala ang pangangailangang mag-type ang admin.
+  useEffect(() => {
+    if (
+      showEnrollModal &&
+      !editingCredential &&
+      form.device_type === "fingerprint" &&
+      !form.credential_id &&
+      !generatingPin
+    ) {
+      requestNewPin();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showEnrollModal, editingCredential, form.device_type]);
 
   async function handleEnroll(e: React.FormEvent) {
     e.preventDefault();
@@ -251,11 +292,15 @@ export function BiometricPage() {
       setFormError("Kumuha muna ng litrato gamit ang camera bago i-save.");
       return;
     }
-    // Sa Enroll mode, kailangan ng bagong face descriptor. Sa Edit mode,
-    // kung hindi nag-retake ng litrato, ok lang na wala tayong bagong
-    // descriptor — hindi natin gagalawin ang dati nang naka-save sa DB.
     if (form.device_type === "face_id" && !editingCredential && !faceDescriptor) {
       setFormError("Walang na-detect na mukha sa litrato. Subukan ulit kumuha.");
+      return;
+    }
+    // FIX: kung "fingerprint" ang type pero wala pa ring PIN dahil
+    // nabigo ang auto-generate, huwag ipadala ang form — mas mabuting
+    // mahuli dito kaysa magpadala ng blangkong PIN.
+    if (form.device_type === "fingerprint" && !editingCredential && !form.credential_id) {
+      setFormError("Hindi pa nakagawa ng Device PIN. Pindutin ang 'Regenerate' o subukan ulit.");
       return;
     }
 
@@ -269,10 +314,8 @@ export function BiometricPage() {
       };
 
       if (editingCredential) {
-        // EDIT — PUT, hindi natin binabago ang employee_id/device_type dito
         await api.updateBiometricCredential(editingCredential.id, payload);
       } else {
-        // BAGONG enrollment — POST
         await api.enrollBiometricDevice(payload);
       }
       closeEnrollModal();
@@ -284,7 +327,7 @@ export function BiometricPage() {
     }
   }
 
-  // BAGO — Delete/Deactivate ng isang credential
+  // Delete/Deactivate ng isang credential
   async function handleDelete(cred: any) {
     const confirmed = window.confirm(
       `Sigurado ka bang gusto mong tanggalin ang ${cred.device_type.replace("_", " ")} credential ni ${cred.employee?.full_name ?? "empleyadong ito"}?\n\nHindi na ito magagamit para mag-punch, pero mananatili ang record para sa audit trail.`
@@ -299,6 +342,28 @@ export function BiometricPage() {
       alert(err.message ?? "Nabigo ang pagtanggal ng credential.");
     } finally {
       setDeletingId(null);
+    }
+  }
+
+  // BAGO — Clear All Credentials. Soft-delete lahat (is_active = FALSE),
+  // kaya mawawala agad sila dito sa listahan pero permanenteng nakatala
+  // pa rin sa Audit Logs. Kailangang mag-re-enroll ulit ang lahat pagkatapos.
+  async function handleClearAll() {
+    if (credentials.length === 0) return;
+    const confirmed = window.confirm(
+      `Sigurado ka bang gusto mong i-clear ANG LAHAT ng ${credentials.length} biometric credentials?\n\nKailangan mag-re-enroll ulit ang bawat empleyado bago sila makapag-Time In/Out gamit ang biometric. Makikita pa rin ito sa Audit Logs.`
+    );
+    if (!confirmed) return;
+
+    setClearingAll(true);
+    try {
+      const result = await api.clearAllBiometricCredentials();
+      alert(`Na-clear ang ${result.cleared} credentials. Puwede nang mag-enroll ulit.`);
+      fetchAll(false);
+    } catch (err: any) {
+      alert(err.message ?? "Nabigo ang pag-clear ng lahat ng credentials.");
+    } finally {
+      setClearingAll(false);
     }
   }
 
@@ -390,9 +455,24 @@ export function BiometricPage() {
             <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-sm text-amber-700">{modelsError}</div>
           )}
 
-          <div className="flex gap-1 bg-muted rounded-xl p-1 w-fit">
-            <button onClick={() => setTab("credentials")} className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${tab === "credentials" ? "bg-card shadow text-foreground" : "text-muted-foreground hover:text-foreground"}`}>Credentials</button>
-            <button onClick={() => setTab("logs")} className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${tab === "logs" ? "bg-card shadow text-foreground" : "text-muted-foreground hover:text-foreground"}`}>Auth Logs</button>
+          <div className="flex items-center justify-between">
+            <div className="flex gap-1 bg-muted rounded-xl p-1 w-fit">
+              <button onClick={() => setTab("credentials")} className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${tab === "credentials" ? "bg-card shadow text-foreground" : "text-muted-foreground hover:text-foreground"}`}>Credentials</button>
+              <button onClick={() => setTab("logs")} className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${tab === "logs" ? "bg-card shadow text-foreground" : "text-muted-foreground hover:text-foreground"}`}>Auth Logs</button>
+            </div>
+
+            {/* BAGO: Clear All Credentials button — nasa tabs row para
+                laging makikita, hindi lang sa credentials tab */}
+            {tab === "credentials" && credentials.length > 0 && (
+              <button
+                onClick={handleClearAll}
+                disabled={clearingAll}
+                className="flex items-center gap-2 px-3.5 py-2 text-sm border border-destructive/30 text-destructive rounded-xl hover:bg-destructive/10 transition-colors disabled:opacity-50"
+              >
+                {clearingAll ? <Loader2 className="w-4 h-4 animate-spin" /> : <Eraser className="w-4 h-4" />}
+                Clear All Credentials
+              </button>
+            )}
           </div>
 
           {tab === "credentials" && (
@@ -430,7 +510,6 @@ export function BiometricPage() {
                             <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${cred.is_active ? "bg-emerald-100 text-emerald-700" : "bg-gray-100 text-gray-500"}`}>
                               {cred.is_active ? "Active" : "Inactive"}
                             </span>
-                            {/* BAGO: Edit at Delete buttons */}
                             <button
                               onClick={() => openEditModal(cred)}
                               title="I-edit ang credential"
@@ -451,7 +530,6 @@ export function BiometricPage() {
                         <div className="mt-3 pt-3 border-t border-border grid grid-cols-2 gap-2 text-xs">
                           <div><p className="text-muted-foreground">Device</p><p className="font-medium text-foreground truncate">{cred.device_name ?? "—"}</p></div>
                           <div><p className="text-muted-foreground">Type</p><p className="font-medium text-foreground capitalize">{cred.device_type.replace("_", " ")}</p></div>
-                          {/* BAGO: ipinapakita na ang Device PIN kung meron */}
                           {PIN_BASED_TYPES.includes(cred.device_type) && (
                             <div><p className="text-muted-foreground">Device PIN</p><p className="font-medium text-foreground font-mono">{cred.credential_id || "—"}</p></div>
                           )}
@@ -516,7 +594,7 @@ export function BiometricPage() {
         </>
       )}
 
-      {/* Enroll/Edit Device Modal — may camera capture at Device PIN field */}
+      {/* Enroll/Edit Device Modal */}
       <Dialog open={showEnrollModal} onOpenChange={(open) => { if (!open) closeEnrollModal(); }}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader><DialogTitle>{editingCredential ? "Edit Credential" : "Enroll Device"}</DialogTitle></DialogHeader>
@@ -545,7 +623,12 @@ export function BiometricPage() {
               <label className="text-sm font-medium text-foreground">Device Type</label>
               <select
                 value={form.device_type}
-                onChange={(e) => { setPhotoData(null); setFaceDescriptor(null); setForm({ ...form, device_type: e.target.value }); }}
+                onChange={(e) => {
+                  setPhotoData(null);
+                  setFaceDescriptor(null);
+                  setPinError(null);
+                  setForm({ ...form, device_type: e.target.value, credential_id: "" });
+                }}
                 disabled={!!editingCredential}
                 className="w-full px-3.5 py-2.5 rounded-lg border border-border bg-input-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 disabled:opacity-60"
               >
@@ -565,20 +648,45 @@ export function BiometricPage() {
                 className="w-full px-3.5 py-2.5 rounded-lg border border-border bg-input-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/20" placeholder="e.g. Front Desk Scanner" />
             </div>
 
-            {/* BAGO: Device PIN / Credential ID field — ito yung kulang dati.
-                Kailangan ito para sa fingerprint (dapat magtugma sa PIN na
-                naka-configure sa aktwal na ZKTeco/eSSL hardware), card, at
-                PIN types. */}
-            {PIN_BASED_TYPES.includes(form.device_type) && (
+            {/* FIX: Fingerprint — AUTO-GENERATED na Device PIN, read-only,
+                may Regenerate button. Hindi na nagta-type ang admin nito. */}
+            {AUTO_PIN_TYPES.includes(form.device_type) && (
               <div className="space-y-1.5">
-                <label className="text-sm font-medium text-foreground">
-                  Device PIN {form.device_type === "fingerprint" && <span className="text-muted-foreground font-normal">(dapat magtugma sa PIN sa fingerprint hardware)</span>}
-                </label>
+                <label className="text-sm font-medium text-foreground">Device PIN (auto-generated)</label>
+                {pinError && <p className="text-xs text-destructive">{pinError}</p>}
+                <div className="flex items-center gap-2">
+                  <input
+                    value={generatingPin ? "Gumagawa ng PIN..." : form.credential_id || "—"}
+                    readOnly
+                    className="flex-1 px-3.5 py-2.5 rounded-lg border border-border bg-muted text-sm font-mono text-muted-foreground cursor-not-allowed"
+                  />
+                  <button
+                    type="button"
+                    onClick={requestNewPin}
+                    disabled={generatingPin}
+                    title="Bumuo ng bagong PIN"
+                    className="w-10 h-10 shrink-0 rounded-lg border border-border flex items-center justify-center hover:bg-muted/50 transition-colors disabled:opacity-50"
+                  >
+                    {generatingPin ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
+                  </button>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Ito ang PIN na i-e-enter mismo ng fingerprint hardware kapag na-match ang scan. Awtomatiko itong nabubuo — walang duplicate.
+                </p>
+              </div>
+            )}
+
+            {/* Card / PIN — manual pa rin, dahil galing ito sa aktwal na
+                physical card o PIN na ibinigay sa employee, hindi
+                ma-a-auto-generate ng system. */}
+            {MANUAL_PIN_TYPES.includes(form.device_type) && (
+              <div className="space-y-1.5">
+                <label className="text-sm font-medium text-foreground">Device PIN / Card ID</label>
                 <input
                   value={form.credential_id}
                   onChange={(e) => setForm({ ...form, credential_id: e.target.value })}
                   className="w-full px-3.5 py-2.5 rounded-lg border border-border bg-input-background text-sm font-mono focus:outline-none focus:ring-2 focus:ring-primary/20"
-                  placeholder="e.g. 1001"
+                  placeholder={form.device_type === "card" ? "e.g. CARD-00123" : "e.g. 1234"}
                 />
               </div>
             )}
@@ -635,8 +743,12 @@ export function BiometricPage() {
               <button type="button" onClick={closeEnrollModal} className="px-4 py-2 text-sm rounded-lg border border-border hover:bg-muted/50 transition-colors flex items-center gap-1.5">
                 <X className="w-3.5 h-3.5" /> Cancel
               </button>
-              <button type="submit" disabled={saving} className="px-4 py-2 text-sm bg-primary text-white rounded-lg hover:bg-primary/90 disabled:opacity-60 transition-colors">
-                {saving ? "Saving..." : editingCredential ? "I-save ang Changes" : "Enroll Device"}
+              <button
+                type="submit"
+                disabled={saving || (form.device_type === "fingerprint" && !editingCredential && generatingPin)}
+                className="px-4 py-2 text-sm bg-primary text-white rounded-lg hover:bg-primary/90 disabled:opacity-60 transition-colors"
+              >
+                {saving ? "Sine-save..." : editingCredential ? "I-save ang Changes" : "Enroll Device"}
               </button>
             </div>
           </form>

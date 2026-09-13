@@ -80,6 +80,10 @@ router.post("/:id/restore", async (req, res) => {
 
     await q("UPDATE employees SET deleted_at = NULL WHERE id = :id", { id: req.params.id });
 
+    // FIX: i-reactivate pabalik yung linked login account, kung hindi ma-a-stuck ito
+    // sa "inactive" kahit na-restore na yung employee profile.
+    await q("UPDATE users SET status = 'active' WHERE employee_id = :id", { id: req.params.id });
+
     await logAudit({
       userId: req.user.id,
       action: "update",
@@ -239,6 +243,14 @@ router.delete("/:id", async (req, res) => {
     if (!existing[0]) return res.status(404).json({ error: "Employee not found" });
 
     await q("UPDATE employees SET deleted_at = NOW() WHERE id = :id", { id: req.params.id });
+
+    // FIX: i-deactivate yung linked login account, para hindi na siya makapag-login
+    // (password login man o face login) kahit na-soft-delete lang yung employees row.
+    await q("UPDATE users SET status = 'inactive' WHERE employee_id = :id", { id: req.params.id });
+
+    // FIX: i-deactivate din yung biometric credentials niya, para hindi na rin
+    // siya ma-match sa face-login recognition loop.
+    await q("UPDATE biometric_credentials SET is_active = FALSE WHERE employee_id = :id", { id: req.params.id });
 
     await logAudit({
       userId: req.user.id,

@@ -17,6 +17,7 @@ interface UserRow {
   status: "active" | "inactive" | "suspended";
   last_login?: string;
   created_at: string;
+  employee_id?: string | null; // FIX: idinagdag para tumugma sa bagong SELECT ng GET /users
 }
 
 const roleConfig: Record<UserRole, { label: string; className: string; icon: React.ComponentType<{ className?: string }> }> = {
@@ -55,14 +56,18 @@ export function UserManagementPage() {
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
 
-  // ---- BAGO: Edit User modal state ----
+  // ---- Edit User modal state ----
   const [showEditModal, setShowEditModal] = useState(false);
   const [editingUser, setEditingUser] = useState<UserRow | null>(null);
   const [editForm, setEditForm] = useState(emptyEditForm);
   const [editSaving, setEditSaving] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);
+  // FIX: hiwalay na "extra" option kapag ang naka-link na employee ay deleted na
+  // (hindi na kasama sa GET /employees list dahil naka-filter ang deleted_at IS NULL doon)
+  const [linkedDeletedEmployee, setLinkedDeletedEmployee] = useState<any | null>(null);
+  const [loadingLinkedEmployee, setLoadingLinkedEmployee] = useState(false);
 
-  // ---- BAGO: Change Role modal state ----
+  // ---- Change Role modal state ----
   const [showRoleModal, setShowRoleModal] = useState(false);
   const [roleTargetUser, setRoleTargetUser] = useState<UserRow | null>(null);
   const [roleValue, setRoleValue] = useState<UserRole>("employee");
@@ -94,6 +99,13 @@ export function UserManagementPage() {
     u.email.toLowerCase().includes(search.toLowerCase())
   );
 
+  // FIX: options para sa "Link to Employee" dropdown sa loob ng Edit modal —
+  // isinasama pa rin ang currently-linked employee kahit na-delete na siya,
+  // para hindi mawala/ma-reset ang existing link kapag nag-e-edit ka ng ibang field.
+  const editEmployeeOptions = linkedDeletedEmployee
+    ? [...employees, linkedDeletedEmployee]
+    : employees;
+
   async function handleAddUser(e: React.FormEvent) {
     e.preventDefault();
     setFormError(null);
@@ -118,21 +130,46 @@ export function UserManagementPage() {
     }
   }
 
-  // ---- BAGO: buksan ang Edit modal na naka-prefill sa data ng napiling user ----
-  function openEditModal(user: UserRow) {
+  // ---- buksan ang Edit modal na naka-prefill sa data ng napiling user ----
+  async function openEditModal(user: UserRow) {
     setEditingUser(user);
     setEditError(null);
-    // hanapin yung employee_id kung naka-link (kung meron ang backend nito sa response;
-    // kung wala, mananatiling blangko at pwedeng piliin ulit)
+    setLinkedDeletedEmployee(null);
     setEditForm({
       full_name: user.full_name,
       email: user.email,
       password: "", // laging blangko simula — iiwan lang blangko kung ayaw palitan
       role: user.role,
-      employee_id: (user as any).employee_id ?? "",
+      employee_id: user.employee_id ?? "",
       status: user.status,
     });
     setShowEditModal(true);
+
+    // FIX: kung may naka-link na employee_id pero wala siya sa (active-only) employees list,
+    // ibig sabihin soft-deleted na siya — kunin pa rin natin ang record niya para hindi
+    // ma-reset ang dropdown sa "Wala" at ma-trigger ang "kailangan mag-link" validation.
+    if (user.employee_id && !employees.some((emp) => emp.id === user.employee_id)) {
+      setLoadingLinkedEmployee(true);
+      try {
+        const emp = await api.getEmployee(user.employee_id);
+        setLinkedDeletedEmployee({
+          ...emp,
+          full_name: emp.deleted_at ? `${emp.full_name} (Deleted)` : emp.full_name,
+        });
+      } catch (err) {
+        console.error("Failed to fetch linked employee:", err);
+        // Hindi na natin ito ipapakita bilang blocking error — babagsak lang sa dating
+        // behavior (blangko ang link) kung talagang hindi na makuha ang record.
+      } finally {
+        setLoadingLinkedEmployee(false);
+      }
+    }
+  }
+
+  function closeEditModal() {
+    setShowEditModal(false);
+    setEditingUser(null);
+    setLinkedDeletedEmployee(null);
   }
 
   async function handleEditUser(e: React.FormEvent) {
@@ -166,8 +203,7 @@ export function UserManagementPage() {
       if (editForm.password) payload.password = editForm.password;
 
       await api.updateUser(editingUser.id, payload);
-      setShowEditModal(false);
-      setEditingUser(null);
+      closeEditModal();
       fetchUsers();
     } catch (err: any) {
       setEditError(err.message ?? "Nabigo ang pag-update ng user.");
@@ -176,7 +212,7 @@ export function UserManagementPage() {
     }
   }
 
-  // ---- BAGO: Change Role quick modal ----
+  // ---- Change Role quick modal ----
   function openRoleModal(user: UserRow) {
     setRoleTargetUser(user);
     setRoleValue(user.role);
@@ -309,7 +345,6 @@ export function UserManagementPage() {
                               </button>
                             </DropdownMenuTrigger>
                             <DropdownMenuContent align="end">
-                              {/* FIX: dating walang onClick — kaya walang nangyayari kapag pinindot */}
                               <DropdownMenuItem onClick={() => openEditModal(user)}>
                                 <Edit2 className="w-3.5 h-3.5 mr-2" /> Edit User
                               </DropdownMenuItem>
@@ -427,8 +462,8 @@ export function UserManagementPage() {
         </DialogContent>
       </Dialog>
 
-      {/* ==== BAGO: EDIT USER MODAL ==== */}
-      <Dialog open={showEditModal} onOpenChange={setShowEditModal}>
+      {/* ==== EDIT USER MODAL ==== */}
+      <Dialog open={showEditModal} onOpenChange={(open) => { if (!open) closeEditModal(); else setShowEditModal(true); }}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader><DialogTitle>Edit User — {editingUser?.full_name}</DialogTitle></DialogHeader>
           <form onSubmit={handleEditUser} className="space-y-4">
@@ -481,16 +516,28 @@ export function UserManagementPage() {
               <label className="text-sm font-medium text-foreground">
                 Link to Employee {editForm.role === "employee" && <span className="text-destructive">*</span>}
               </label>
-              <select value={editForm.employee_id} onChange={(e) => setEditForm({ ...editForm, employee_id: e.target.value })}
-                className="w-full px-3.5 py-2.5 rounded-lg border border-border bg-input-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/20">
+              <select
+                value={editForm.employee_id}
+                onChange={(e) => setEditForm({ ...editForm, employee_id: e.target.value })}
+                disabled={loadingLinkedEmployee}
+                className="w-full px-3.5 py-2.5 rounded-lg border border-border bg-input-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 disabled:opacity-60"
+              >
                 <option value="">Wala</option>
-                {employees.map((emp) => (
+                {editEmployeeOptions.map((emp) => (
                   <option key={emp.id} value={emp.id}>{emp.full_name}</option>
                 ))}
               </select>
+              {loadingLinkedEmployee && (
+                <p className="text-xs text-muted-foreground">Kinukuha ang naka-link na employee record...</p>
+              )}
+              {linkedDeletedEmployee && !loadingLinkedEmployee && (
+                <p className="text-xs text-amber-600">
+                  Paalala: na-delete na ang naka-link na employee na ito. Piliin ang ibang employee o baguhin ang role kung kinakailangan.
+                </p>
+              )}
             </div>
             <div className="flex justify-end gap-2 pt-2">
-              <button type="button" onClick={() => setShowEditModal(false)} className="px-4 py-2 text-sm rounded-lg border border-border hover:bg-muted/50 transition-colors">Cancel</button>
+              <button type="button" onClick={closeEditModal} className="px-4 py-2 text-sm rounded-lg border border-border hover:bg-muted/50 transition-colors">Cancel</button>
               <button type="submit" disabled={editSaving} className="px-4 py-2 text-sm bg-primary text-white rounded-lg hover:bg-primary/90 disabled:opacity-60 transition-colors">
                 {editSaving ? "Saving..." : "Save Changes"}
               </button>
@@ -499,7 +546,7 @@ export function UserManagementPage() {
         </DialogContent>
       </Dialog>
 
-      {/* ==== BAGO: CHANGE ROLE QUICK MODAL ==== */}
+      {/* ==== CHANGE ROLE QUICK MODAL ==== */}
       <Dialog open={showRoleModal} onOpenChange={setShowRoleModal}>
         <DialogContent className="sm:max-w-sm">
           <DialogHeader><DialogTitle>Change Role — {roleTargetUser?.full_name}</DialogTitle></DialogHeader>

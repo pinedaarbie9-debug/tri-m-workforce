@@ -52,9 +52,6 @@ export const api = {
   createEmployee: (data: any) => request<{ id: string }>("/employees", { method: "POST", body: JSON.stringify(data) }),
   updateEmployee: (id: string, data: any) => request<{ ok: true }>(`/employees/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
   deleteEmployee: (id: string) => request<{ ok: true }>(`/employees/${id}`, { method: "DELETE" }),
-  // BAGO — Recently Deleted / Recycle Bin para sa employees.
-  // Ang deleteEmployee sa itaas ay soft-delete na ngayon sa backend (deleted_at),
-  // kaya narito ang mga endpoint para makita at ma-restore ang mga na-delete.
   getDeletedEmployees: () => request<any[]>("/employees/trash"),
   restoreEmployee: (id: string) => request<{ ok: true }>(`/employees/${id}/restore`, { method: "POST" }),
   permanentlyDeleteEmployee: (id: string) => request<{ ok: true }>(`/employees/${id}/permanent`, { method: "DELETE" }),
@@ -62,6 +59,8 @@ export const api = {
   // ---- Departments ----
   getDepartments: () => request<any[]>("/departments"),
   createDepartment: (data: any) => request<{ id: string }>("/departments", { method: "POST", body: JSON.stringify(data) }),
+  updateDepartment: (id: string, data: any) => request<{ ok: true }>(`/departments/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
+  deleteDepartment: (id: string) => request<{ ok: true }>(`/departments/${id}`, { method: "DELETE" }),
 
   // ---- Attendance ----
   getAttendance: (params?: { date?: string; from?: string; to?: string }) => {
@@ -92,17 +91,18 @@ export const api = {
       enrollmentRate: number;
     }>("/biometric-credentials/stats"),
   getPendingBiometricEnrollment: () => request<any[]>("/biometric-credentials/pending"),
-  enrollBiometricDevice: (data: any) => request<{ id: string }>("/biometric-credentials", { method: "POST", body: JSON.stringify(data) }),
+  enrollBiometricDevice: (data: any) => request<{ id: string; credential_id?: string }>("/biometric-credentials", { method: "POST", body: JSON.stringify(data) }),
   getMyFaceDescriptor: () => request<{ face_descriptor: number[] }>("/biometric-credentials/me/face-descriptor"),
-  // BAGO — para sa Edit button sa Biometric Auth page. Tumatawag ng
-  // PUT /biometric-credentials/:id sa backend (biometric.js).
   updateBiometricCredential: (id: string, data: any) =>
     request<{ success: true }>(`/biometric-credentials/${id}`, { method: "PUT", body: JSON.stringify(data) }),
-  // BAGO — para sa Delete button. Default ay soft-delete (is_active = FALSE,
-  // pinapanatili ang audit trail). Ipasa ang `hard: true` kung gusto ng
-  // permanenteng pagtanggal ng row (tumutugma sa ?hard=true sa backend).
   deleteBiometricCredential: (id: string, hard = false) =>
     request<{ success: true; hard: boolean }>(`/biometric-credentials/${id}${hard ? "?hard=true" : ""}`, { method: "DELETE" }),
+  generateDevicePin: () => request<{ credential_id: string }>("/biometric-credentials/generate-pin"),
+  clearAllBiometricCredentials: (hard = false) =>
+    request<{ success: true; hard: boolean; cleared: number }>(
+      `/biometric-credentials/clear-all?confirm=true${hard ? "&hard=true" : ""}`,
+      { method: "DELETE" }
+    ),
 
   // ---- Audit Logs ----
   getAuditLogs: () => request<any[]>("/audit-logs"),

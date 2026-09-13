@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import { Building2, Search, Plus, MoreHorizontal, Edit2, Trash2, Loader2 } from "lucide-react";
+import { Building2, Search, Plus, MoreHorizontal, Edit2, Trash2, Loader2, Users, X, UserMinus } from "lucide-react";
 import { motion } from "motion/react";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "../components/ui/dropdown-menu";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../components/ui/dialog";
@@ -12,6 +12,14 @@ interface Department {
   manager: string | null;
   head_count: number;
   color: string;
+}
+
+interface Employee {
+  id: string;
+  full_name: string;
+  job_title: string;
+  department_id: string | null;
+  status: string;
 }
 
 const COLOR_OPTIONS = ["#7c3aed", "#06b6d4", "#10b981", "#f59e0b", "#ec4899", "#8b5cf6", "#14b8a6"];
@@ -28,6 +36,24 @@ export function DepartmentsPage() {
   const [form, setForm] = useState(emptyForm);
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
+
+  const [showEditModal, setShowEditModal] = useState(false);
+  const [editingDept, setEditingDept] = useState<Department | null>(null);
+  const [editForm, setEditForm] = useState(emptyForm);
+  const [editSaving, setEditSaving] = useState(false);
+  const [editError, setEditError] = useState<string | null>(null);
+
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+
+  // BAGO — Manage Employees modal state
+  const [showEmployeesModal, setShowEmployeesModal] = useState(false);
+  const [employeesDept, setEmployeesDept] = useState<Department | null>(null);
+  const [allEmployees, setAllEmployees] = useState<Employee[]>([]);
+  const [employeesLoading, setEmployeesLoading] = useState(false);
+  const [employeesError, setEmployeesError] = useState<string | null>(null);
+  const [assigningId, setAssigningId] = useState<string | null>(null);
+  const [selectedToAssign, setSelectedToAssign] = useState("");
 
   const fetchDepartments = useCallback(async () => {
     setLoading(true);
@@ -68,6 +94,123 @@ export function DepartmentsPage() {
       setFormError(err.message ?? "Nabigo ang pag-add ng department.");
     } finally {
       setSaving(false);
+    }
+  }
+
+  function openEditModal(dept: Department) {
+    setEditingDept(dept);
+    setEditError(null);
+    setEditForm({
+      name: dept.name,
+      code: dept.code,
+      manager: dept.manager ?? "",
+      color: dept.color,
+    });
+    setShowEditModal(true);
+  }
+
+  function closeEditModal() {
+    setShowEditModal(false);
+    setEditingDept(null);
+  }
+
+  async function handleEditDepartment(e: React.FormEvent) {
+    e.preventDefault();
+    if (!editingDept) return;
+    setEditError(null);
+    if (!editForm.name.trim() || !editForm.code.trim()) {
+      setEditError("Kailangan ng name at code.");
+      return;
+    }
+    setEditSaving(true);
+    try {
+      await api.updateDepartment(editingDept.id, editForm);
+      closeEditModal();
+      fetchDepartments();
+    } catch (err: any) {
+      setEditError(err.message ?? "Nabigo ang pag-update ng department.");
+    } finally {
+      setEditSaving(false);
+    }
+  }
+
+  async function handleDeleteDepartment(dept: Department) {
+    const confirmed = window.confirm(`Sigurado ka bang gusto mong burahin ang department na "${dept.name}"?`);
+    if (!confirmed) return;
+
+    setDeleteError(null);
+    setDeletingId(dept.id);
+    try {
+      await api.deleteDepartment(dept.id);
+      fetchDepartments();
+    } catch (err: any) {
+      setDeleteError(err.message ?? "Nabigo ang pag-delete ng department.");
+    } finally {
+      setDeletingId(null);
+    }
+  }
+
+  // ==== BAGO — Manage Employees (assign / remove) ====
+
+  async function openEmployeesModal(dept: Department) {
+    setEmployeesDept(dept);
+    setEmployeesError(null);
+    setSelectedToAssign("");
+    setShowEmployeesModal(true);
+    setEmployeesLoading(true);
+    try {
+      const data = await api.getEmployees();
+      setAllEmployees(data);
+    } catch (err: any) {
+      setEmployeesError(err.message ?? "Nabigo ang pagkuha ng listahan ng empleyado.");
+    } finally {
+      setEmployeesLoading(false);
+    }
+  }
+
+  function closeEmployeesModal() {
+    setShowEmployeesModal(false);
+    setEmployeesDept(null);
+    setAllEmployees([]);
+  }
+
+  const assignedEmployees = employeesDept
+    ? allEmployees.filter((e) => e.department_id === employeesDept.id)
+    : [];
+
+  const unassignedOrOtherDeptEmployees = employeesDept
+    ? allEmployees.filter((e) => e.department_id !== employeesDept.id && e.status === "active")
+    : [];
+
+  async function handleAssignEmployee() {
+    if (!employeesDept || !selectedToAssign) return;
+    setAssigningId(selectedToAssign);
+    setEmployeesError(null);
+    try {
+      await api.updateEmployee(selectedToAssign, { department_id: employeesDept.id });
+      const data = await api.getEmployees();
+      setAllEmployees(data);
+      setSelectedToAssign("");
+      fetchDepartments(); // para mag-update din agad ang head_count sa cards
+    } catch (err: any) {
+      setEmployeesError(err.message ?? "Nabigo ang pag-assign ng empleyado.");
+    } finally {
+      setAssigningId(null);
+    }
+  }
+
+  async function handleRemoveEmployee(emp: Employee) {
+    setAssigningId(emp.id);
+    setEmployeesError(null);
+    try {
+      await api.updateEmployee(emp.id, { department_id: null });
+      const data = await api.getEmployees();
+      setAllEmployees(data);
+      fetchDepartments();
+    } catch (err: any) {
+      setEmployeesError(err.message ?? "Nabigo ang pag-alis ng empleyado sa department.");
+    } finally {
+      setAssigningId(null);
     }
   }
 
@@ -118,6 +261,9 @@ export function DepartmentsPage() {
       {!loading && error && (
         <div className="p-4 bg-red-50 border border-red-200 rounded-xl text-sm text-red-700">Failed to load departments: {error}</div>
       )}
+      {!loading && deleteError && (
+        <div className="p-4 bg-red-50 border border-red-200 rounded-xl text-sm text-red-700">{deleteError}</div>
+      )}
 
       {!loading && !error && (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -144,22 +290,44 @@ export function DepartmentsPage() {
                 </div>
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
-                    <button className="w-7 h-7 rounded-lg flex items-center justify-center hover:bg-muted transition-colors">
-                      <MoreHorizontal className="w-4 h-4 text-muted-foreground" />
+                    <button
+                      disabled={deletingId === dept.id}
+                      className="w-7 h-7 rounded-lg flex items-center justify-center hover:bg-muted transition-colors disabled:opacity-50"
+                    >
+                      {deletingId === dept.id ? (
+                        <Loader2 className="w-4 h-4 text-muted-foreground animate-spin" />
+                      ) : (
+                        <MoreHorizontal className="w-4 h-4 text-muted-foreground" />
+                      )}
                     </button>
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="end">
-                    <DropdownMenuItem><Edit2 className="w-3.5 h-3.5 mr-2" /> Edit</DropdownMenuItem>
-                    <DropdownMenuItem className="text-destructive focus:text-destructive"><Trash2 className="w-3.5 h-3.5 mr-2" /> Delete</DropdownMenuItem>
+                    {/* BAGO — Manage Employees option */}
+                    <DropdownMenuItem onClick={() => openEmployeesModal(dept)}>
+                      <Users className="w-3.5 h-3.5 mr-2" /> Manage Employees
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => openEditModal(dept)}>
+                      <Edit2 className="w-3.5 h-3.5 mr-2" /> Edit
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      className="text-destructive focus:text-destructive"
+                      onClick={() => handleDeleteDepartment(dept)}
+                    >
+                      <Trash2 className="w-3.5 h-3.5 mr-2" /> Delete
+                    </DropdownMenuItem>
                   </DropdownMenuContent>
                 </DropdownMenu>
               </div>
 
+              {/* BAGO — clickable Employees count para diretso sa Manage Employees modal */}
               <div className="mt-4">
-                <div className="bg-muted/40 rounded-xl p-3 text-center">
+                <button
+                  onClick={() => openEmployeesModal(dept)}
+                  className="w-full bg-muted/40 rounded-xl p-3 text-center hover:bg-muted/70 transition-colors"
+                >
                   <p className="text-xs text-muted-foreground">Employees</p>
                   <p className="font-bold text-foreground text-lg mt-0.5">{dept.head_count}</p>
-                </div>
+                </button>
               </div>
 
               <div className="mt-3 pt-3 border-t border-border">
@@ -178,6 +346,7 @@ export function DepartmentsPage() {
         </div>
       )}
 
+      {/* ==== ADD DEPARTMENT MODAL ==== */}
       <Dialog open={showAddModal} onOpenChange={setShowAddModal}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader><DialogTitle>Add Department</DialogTitle></DialogHeader>
@@ -233,6 +402,142 @@ export function DepartmentsPage() {
               </button>
             </div>
           </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* ==== EDIT DEPARTMENT MODAL ==== */}
+      <Dialog open={showEditModal} onOpenChange={(open) => { if (!open) closeEditModal(); else setShowEditModal(true); }}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader><DialogTitle>Edit Department — {editingDept?.name}</DialogTitle></DialogHeader>
+          <form onSubmit={handleEditDepartment} className="space-y-4">
+            {editError && (
+              <div className="p-2.5 bg-destructive/10 border border-destructive/20 rounded-lg text-sm text-destructive">{editError}</div>
+            )}
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium text-foreground">Department Name</label>
+              <input
+                value={editForm.name}
+                onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
+                className="w-full px-3.5 py-2.5 rounded-lg border border-border bg-input-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/20"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium text-foreground">Code</label>
+              <input
+                value={editForm.code}
+                onChange={(e) => setEditForm({ ...editForm, code: e.target.value.toUpperCase() })}
+                className="w-full px-3.5 py-2.5 rounded-lg border border-border bg-input-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/20"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium text-foreground">Manager (optional)</label>
+              <input
+                value={editForm.manager}
+                onChange={(e) => setEditForm({ ...editForm, manager: e.target.value })}
+                className="w-full px-3.5 py-2.5 rounded-lg border border-border bg-input-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/20"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium text-foreground">Color</label>
+              <div className="flex gap-2">
+                {COLOR_OPTIONS.map((c) => (
+                  <button
+                    key={c}
+                    type="button"
+                    onClick={() => setEditForm({ ...editForm, color: c })}
+                    className={`w-7 h-7 rounded-full border-2 transition-all ${editForm.color === c ? "border-foreground scale-110" : "border-transparent"}`}
+                    style={{ backgroundColor: c }}
+                  />
+                ))}
+              </div>
+            </div>
+            <div className="flex justify-end gap-2 pt-2">
+              <button type="button" onClick={closeEditModal} className="px-4 py-2 text-sm rounded-lg border border-border hover:bg-muted/50 transition-colors">Cancel</button>
+              <button type="submit" disabled={editSaving} className="px-4 py-2 text-sm bg-primary text-white rounded-lg hover:bg-primary/90 disabled:opacity-60 transition-colors">
+                {editSaving ? "Saving..." : "Save Changes"}
+              </button>
+            </div>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* ==== BAGO: MANAGE EMPLOYEES MODAL (assign / remove) ==== */}
+      <Dialog open={showEmployeesModal} onOpenChange={(open) => { if (!open) closeEmployeesModal(); }}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader><DialogTitle>Manage Employees — {employeesDept?.name}</DialogTitle></DialogHeader>
+
+          {employeesError && (
+            <div className="p-2.5 bg-destructive/10 border border-destructive/20 rounded-lg text-sm text-destructive">{employeesError}</div>
+          )}
+
+          {employeesLoading ? (
+            <div className="flex items-center justify-center py-10 text-muted-foreground">
+              <Loader2 className="w-5 h-5 mr-2 animate-spin" /> Loading employees...
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {/* Assign new employee */}
+              <div className="space-y-1.5">
+                <label className="text-sm font-medium text-foreground">Assign an employee to this department</label>
+                <div className="flex gap-2">
+                  <select
+                    value={selectedToAssign}
+                    onChange={(e) => setSelectedToAssign(e.target.value)}
+                    className="flex-1 px-3.5 py-2.5 rounded-lg border border-border bg-input-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/20"
+                  >
+                    <option value="">Piliin ang empleyado...</option>
+                    {unassignedOrOtherDeptEmployees.map((emp) => (
+                      <option key={emp.id} value={emp.id}>
+                        {emp.full_name} — {emp.job_title}
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    onClick={handleAssignEmployee}
+                    disabled={!selectedToAssign || assigningId === selectedToAssign}
+                    className="px-4 py-2.5 text-sm bg-primary text-white rounded-lg hover:bg-primary/90 disabled:opacity-50 transition-colors whitespace-nowrap"
+                  >
+                    {assigningId === selectedToAssign ? "Assigning..." : "Assign"}
+                  </button>
+                </div>
+                {unassignedOrOtherDeptEmployees.length === 0 && (
+                  <p className="text-xs text-muted-foreground">Walang ibang empleyado na pwedeng i-assign.</p>
+                )}
+              </div>
+
+              {/* Currently assigned employees */}
+              <div className="space-y-1.5">
+                <label className="text-sm font-medium text-foreground">Kasalukuyang naka-assign ({assignedEmployees.length})</label>
+                <div className="border border-border rounded-lg divide-y divide-border max-h-64 overflow-y-auto">
+                  {assignedEmployees.length === 0 && (
+                    <p className="p-4 text-sm text-muted-foreground text-center">Walang empleyadong naka-assign sa department na ito.</p>
+                  )}
+                  {assignedEmployees.map((emp) => (
+                    <div key={emp.id} className="flex items-center justify-between px-3.5 py-2.5">
+                      <div>
+                        <p className="text-sm font-medium text-foreground">{emp.full_name}</p>
+                        <p className="text-xs text-muted-foreground">{emp.job_title}</p>
+                      </div>
+                      <button
+                        onClick={() => handleRemoveEmployee(emp)}
+                        disabled={assigningId === emp.id}
+                        className="flex items-center gap-1 px-2.5 py-1.5 text-xs text-destructive border border-destructive/30 rounded-lg hover:bg-destructive/10 disabled:opacity-50 transition-colors"
+                      >
+                        {assigningId === emp.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <UserMinus className="w-3 h-3" />}
+                        Remove
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="flex justify-end pt-2">
+                <button onClick={closeEmployeesModal} className="px-4 py-2 text-sm rounded-lg border border-border hover:bg-muted/50 transition-colors">
+                  Close
+                </button>
+              </div>
+            </div>
+          )}
         </DialogContent>
       </Dialog>
     </div>
