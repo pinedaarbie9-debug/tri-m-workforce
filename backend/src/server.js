@@ -33,6 +33,9 @@ app.use("/iclock", deviceAttendanceRoutes);
 
 app.use(express.json());
 
+// Root route — kailangan ito para sagutin ang health check ng hosting platform
+app.get("/", (req, res) => res.status(200).json({ status: "ok" }));
+
 app.use("/api/auth", authRoutes);
 app.use("/api/employees", employeesRoutes);
 app.use("/api/departments", departmentsRoutes);
