@@ -5,6 +5,8 @@ import path from "path";
 import { fileURLToPath } from "url";
 dotenv.config();
 
+console.log("🔧 Nag-start ang server.js, papasok na sa imports...");
+
 import authRoutes from "./routes/auth.js";
 import employeesRoutes from "./routes/employees.js";
 import departmentsRoutes from "./routes/departments.js";
@@ -21,6 +23,8 @@ import timesheetsRoutes from "./routes/timesheets.js";
 import reportsRoutes from "./routes/reports.js";
 import deviceAttendanceRoutes from "./routes/deviceattendance.js"; // BAGO
 import partnerAttendanceRoutes from "./routes/partnerAttendance.js"; // BAGO - para kay Kenneth/HR1
+
+console.log("✅ Lahat ng route files matagumpay na na-import.");
 
 // Kailangan ito dahil ESM module ("type": "module") - walang built-in __dirname
 const __filename = fileURLToPath(import.meta.url);
@@ -59,7 +63,7 @@ app.use("/api/partner/attendance", partnerAttendanceRoutes); // BAGO - endpoint 
 app.get("/api/health", (req, res) => res.json({ ok: true }));
 
 // ============================================================
-// BAGONG BAHAGI: I-serve ang built frontend (Vite output)
+// I-serve ang built frontend (Vite output)
 // ============================================================
 // Ang "dist" folder ay nasa ROOT ng repo (my-workforce-app/dist),
 // habang ang server.js na ito ay nasa my-workforce-app/backend/src/
@@ -70,8 +74,6 @@ app.use(express.static(frontendPath));
 
 // SPA fallback — kahit anong route na hindi /api o /iclock, ibalik ang
 // index.html para si React Router na ang bahalang mag-handle ng routing
-// (kailangan ito para gumana ang direktang pag-refresh sa mga page tulad
-// ng /dashboard, /employees, atbp.)
 app.get(/^(?!\/api|\/iclock).*/, (req, res) => {
   res.sendFile(path.join(frontendPath, "index.html"));
 });
@@ -79,7 +81,7 @@ app.get(/^(?!\/api|\/iclock).*/, (req, res) => {
 
 // Error handler — dapat laging PINAKAHULI ito sa lahat ng routes/middleware
 app.use((err, req, res, next) => {
-  console.error(err);
+  console.error("❌ Express error handler:", err);
   res.status(500).json({ error: err.message ?? "Internal server error" });
 });
 
@@ -90,5 +92,11 @@ process.on("uncaughtException", (err) => {
   console.error("⚠️  Uncaught exception (hindi pinatay ang server):", err);
 });
 
-const PORT = process.env.PORT ?? 4000;
-app.listen(PORT, () => console.log(`✅ Workforce API running sa http://localhost:${PORT}/api`));
+// Ibinaba mula 4000 papunta sa 3000 para tumugma sa Port na naka-configure
+// sa HostForge (Build Configuration > Port). Gagamitin pa rin ang PORT env
+// var kung ito ay naka-set ng platform.
+const PORT = process.env.PORT ?? 3000;
+
+app.listen(PORT, "0.0.0.0", () => {
+  console.log(`✅ Workforce API + Frontend running sa http://0.0.0.0:${PORT}`);
+});
