@@ -1,6 +1,8 @@
 import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
+import path from "path";
+import { fileURLToPath } from "url";
 dotenv.config();
 
 import authRoutes from "./routes/auth.js";
@@ -18,6 +20,11 @@ import settingsRoutes from "./routes/settings.js";
 import timesheetsRoutes from "./routes/timesheets.js";
 import reportsRoutes from "./routes/reports.js";
 import deviceAttendanceRoutes from "./routes/deviceattendance.js"; // BAGO
+import partnerAttendanceRoutes from "./routes/partnerAttendance.js"; // BAGO - para kay Kenneth/HR1
+
+// Kailangan ito dahil ESM module ("type": "module") - walang built-in __dirname
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const app = express();
 
@@ -33,9 +40,6 @@ app.use("/iclock", deviceAttendanceRoutes);
 
 app.use(express.json());
 
-// Root route — kailangan ito para sagutin ang health check ng hosting platform
-app.get("/", (req, res) => res.status(200).json({ status: "ok" }));
-
 app.use("/api/auth", authRoutes);
 app.use("/api/employees", employeesRoutes);
 app.use("/api/departments", departmentsRoutes);
@@ -50,9 +54,30 @@ app.use("/api/notifications", notificationsRoutes);
 app.use("/api/settings", settingsRoutes);
 app.use("/api/timesheets", timesheetsRoutes);
 app.use("/api/reports", reportsRoutes);
+app.use("/api/partner/attendance", partnerAttendanceRoutes); // BAGO - endpoint para kay Kenneth
 
 app.get("/api/health", (req, res) => res.json({ ok: true }));
 
+// ============================================================
+// BAGONG BAHAGI: I-serve ang built frontend (Vite output)
+// ============================================================
+// Ang "dist" folder ay nasa ROOT ng repo (my-workforce-app/dist),
+// habang ang server.js na ito ay nasa my-workforce-app/backend/src/
+// kaya kailangan umakyat ng dalawang level (../../) para maabot ito.
+const frontendPath = path.join(__dirname, "../../dist");
+
+app.use(express.static(frontendPath));
+
+// SPA fallback — kahit anong route na hindi /api o /iclock, ibalik ang
+// index.html para si React Router na ang bahalang mag-handle ng routing
+// (kailangan ito para gumana ang direktang pag-refresh sa mga page tulad
+// ng /dashboard, /employees, atbp.)
+app.get(/^(?!\/api|\/iclock).*/, (req, res) => {
+  res.sendFile(path.join(frontendPath, "index.html"));
+});
+// ============================================================
+
+// Error handler — dapat laging PINAKAHULI ito sa lahat ng routes/middleware
 app.use((err, req, res, next) => {
   console.error(err);
   res.status(500).json({ error: err.message ?? "Internal server error" });
