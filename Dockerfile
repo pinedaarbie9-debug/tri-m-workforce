@@ -1,25 +1,44 @@
 # ============================================================
-# Node.js 22 Alpine — lightweight runtime for Express + static frontend
-# Frontend (Vite) ay pre-built na, naka-commit sa dist/ folder.
+# Node.js 22 Alpine — Express backend + pre-built React frontend
 # ============================================================
 
 FROM node:22-alpine
 
 WORKDIR /app
 
-# I-copy muna LAHAT ng files (frontend + backend), para available na
-# agad ang buong repo structure kasama ang backend/ folder.
-COPY . .
+# ============================================================
+# Copy files
+# ============================================================
+# Copy backend (for npm ci)
+COPY backend/package.json backend/package-lock.json* ./backend/
 
-# I-install lang ang backend dependencies.
-# Yung dist/ (built frontend) ay naka-commit na sa repo — hindi na kailangan i-build dito.
+# Install backend dependencies (cached layer)
 RUN --mount=type=cache,target=/root/.npm,sharing=locked cd backend && npm ci
 
-# Set environment
+# Copy backend source
+COPY backend/src ./backend/src
+COPY backend/package.json ./backend/package.json
+
+# Copy pre-built frontend
+COPY dist ./dist
+
+# ============================================================
+# Verify na nandiyan yung files (para makita sa build logs)
+# ============================================================
+RUN echo "=== /app contents ===" && ls -la /app && \
+    echo "=== /app/dist contents ===" && ls -la /app/dist && \
+    echo "=== /app/dist/assets contents ===" && ls -la /app/dist/assets && \
+    echo "=== /app/backend contents ===" && ls -la /app/backend
+
+# ============================================================
+# Environment
+# ============================================================
 ENV NODE_ENV=production
 ENV PORT=3000
 
 EXPOSE 3000
 
-# Start the backend server (which also serves the static frontend)
+WORKDIR /app
+
+# Start the backend server
 CMD ["node", "backend/src/server.js"]
