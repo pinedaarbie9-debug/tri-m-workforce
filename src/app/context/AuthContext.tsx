@@ -1,6 +1,6 @@
 // src/app/context/AuthContext.tsx
 import { createContext, useContext, useState, useEffect, ReactNode } from "react";
-import { api, setToken } from "../../lib/api";
+import { api, setToken, ApiError } from "../../lib/api";
 
 interface User {
   id: string;
@@ -10,12 +10,25 @@ interface User {
   employee_id?: string | null;
 }
 
+interface AuthError {
+  message: string;
+  secondsLeft?: number;
+  lockedUntil?: string;
+}
+
+interface SignInResult {
+  error: AuthError | null;
+  requiresMfa?: boolean;
+  tempToken?: string;
+}
+
 interface AuthContextType {
   user: User | null;
   isAuthenticated: boolean;
   loading: boolean;
-  signIn: (email: string, password: string) => Promise<{ error: { message: string } | null }>;
-  faceSignIn: (faceDescriptor: number[]) => Promise<{ error: { message: string } | null }>;
+  signIn: (email: string, password: string) => Promise<SignInResult>;
+  faceSignIn: (faceDescriptor: number[]) => Promise<SignInResult>;
+  verifyMfa: (tempToken: string, code: string) => Promise<{ error: AuthError | null }>;
   signOut: () => Promise<void>;
 }
 
@@ -46,25 +59,68 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     loadCurrentUser();
   }, []);
 
-  async function signIn(email: string, password: string) {
+  async function signIn(email: string, password: string): Promise<SignInResult> {
     try {
-      const { token, user } = await api.login(email, password);
-      setToken(token);
-      setUser(user);
+      const res = await api.login(email, password);
+
+      if ((res as any).requires_mfa) {
+        return {
+          error: null,
+          requiresMfa: true,
+          tempToken: (res as any).temp_token,
+        };
+      }
+
+      setToken(res.token);
+      setUser(res.user);
       return { error: null };
     } catch (err: any) {
-      return { error: { message: err.message ?? "Nabigo ang pag-login." } };
+      return {
+        error: {
+          message: err.message ?? "Login failed.",
+          secondsLeft: err instanceof ApiError ? err.secondsLeft : undefined,
+          lockedUntil: err instanceof ApiError ? err.lockedUntil : undefined,
+        },
+      };
     }
   }
 
-  async function faceSignIn(faceDescriptor: number[]) {
+  async function faceSignIn(faceDescriptor: number[]): Promise<SignInResult> {
     try {
-      const { token, user } = await api.faceLogin(faceDescriptor);
-      setToken(token);
-      setUser(user);
+      const res = await api.faceLogin(faceDescriptor);
+
+      if ((res as any).requires_mfa) {
+        return {
+          error: null,
+          requiresMfa: true,
+          tempToken: (res as any).temp_token,
+        };
+      }
+
+      setToken(res.token);
+      setUser(res.user);
       return { error: null };
     } catch (err: any) {
-      return { error: { message: err.message ?? "Nabigo ang face login." } };
+      return {
+        error: {
+          message: err.message ?? "Face login failed.",
+          secondsLeft: err instanceof ApiError ? err.secondsLeft : undefined,
+          lockedUntil: err instanceof ApiError ? err.lockedUntil : undefined,
+        },
+      };
+    }
+  }
+
+  async function verifyMfa(tempToken: string, code: string): Promise<{ error: AuthError | null }> {
+    try {
+      const res = await api.verifyMfa(tempToken, code);
+      setToken(res.token);
+      setUser(res.user);
+      return { error: null };
+    } catch (err: any) {
+      return {
+        error: { message: err.message ?? "MFA verification failed." },
+      };
     }
   }
 
@@ -72,7 +128,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     try {
       await api.logout();
     } catch {
-      // hindi na kailangan i-block ang logout kahit mag-fail ang request
+      // ignore
     } finally {
       setToken(null);
       setUser(null);
@@ -81,7 +137,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   return (
     <AuthContext.Provider
-      value={{ user, isAuthenticated: !!user, loading, signIn, faceSignIn, signOut }}
+      value={{ user, isAuthenticated: !!user, loading, signIn, faceSignIn, verifyMfa, signOut }}
     >
       {children}
     </AuthContext.Provider>

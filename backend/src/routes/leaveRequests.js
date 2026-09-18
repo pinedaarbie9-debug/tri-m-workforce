@@ -2,6 +2,7 @@ import { Router } from "express";
 import crypto from "node:crypto";
 import { q } from "../db.js";
 import { requireAuth } from "../middleware/auth.js";
+import { notifyAdmins, notifyEmployeeOwner } from "../utils/notify.js";
 
 const router = Router();
 router.use(requireAuth);
@@ -16,29 +17,10 @@ function safeParseJSON(value) {
   }
 }
 
-async function notifyAdmins({ type, title, message }) {
-  const admins = await q("SELECT id FROM users WHERE role IN ('admin','hr_manager','supervisor') AND status = 'active'");
-  for (const admin of admins) {
-    await q(
-      "INSERT INTO notifications (id, user_id, type, title, message) VALUES (:id, :user_id, :type, :title, :message)",
-      { id: crypto.randomUUID(), user_id: admin.id, type, title, message }
-    );
-  }
-}
-
-async function notifyEmployeeOwner(employee_id, { type, title, message }) {
-  const rows = await q("SELECT id FROM users WHERE employee_id = :employee_id LIMIT 1", { employee_id });
-  if (!rows[0]) return;
-  await q(
-    "INSERT INTO notifications (id, user_id, type, title, message) VALUES (:id, :user_id, :type, :title, :message)",
-    { id: crypto.randomUUID(), user_id: rows[0].id, type, title, message }
-  );
-}
-
 router.get("/me", async (req, res) => {
   try {
     if (!req.user.employee_id) {
-      return res.status(404).json({ error: "Walang naka-link na employee record sa account na ito." });
+      return res.status(404).json({ error: "No linked employee record for this account." });
     }
     const rows = await q(
       "SELECT * FROM leave_requests WHERE employee_id = :employee_id ORDER BY created_at DESC",
@@ -54,11 +36,11 @@ router.get("/me", async (req, res) => {
 router.post("/me", async (req, res) => {
   try {
     if (!req.user.employee_id) {
-      return res.status(404).json({ error: "Walang naka-link na employee record sa account na ito." });
+      return res.status(404).json({ error: "No linked employee record for this account." });
     }
     const { leave_type, start_date, end_date, reason } = req.body;
     if (!leave_type || !start_date || !end_date) {
-      return res.status(400).json({ error: "Kailangan ng leave type at petsa." });
+      return res.status(400).json({ error: "Leave type and dates are required." });
     }
 
     const start = new Date(start_date);
@@ -77,7 +59,7 @@ router.post("/me", async (req, res) => {
     const advanceNoticeDays = settings.advance_notice_days ?? 0;
     if (leave_type !== "emergency" && daysUntilStart < advanceNoticeDays) {
       return res.status(400).json({
-        error: `Kailangan ng hindi bababa sa ${advanceNoticeDays} araw na paunang abiso para sa leave type na ito.`,
+        error: `At least ${advanceNoticeDays} days advance notice is required for this leave type.`,
       });
     }
 
@@ -102,7 +84,7 @@ router.post("/me", async (req, res) => {
 
       if (days_count > remaining) {
         return res.status(400).json({
-          error: `Hindi sapat ang natitirang ${leave_type} leave mo. Natitira: ${remaining} araw, hiniling: ${days_count} araw.`,
+          error: `Insufficient ${leave_type} leave balance. Remaining: ${remaining} days, requested: ${days_count} days.`,
         });
       }
     }
@@ -118,6 +100,7 @@ router.post("/me", async (req, res) => {
       { uid: req.user.id, rid: id, ip: req.ip }
     );
 
+    // ✅ Notify admins/HR about the new leave request
     await notifyAdmins({
       type: "leave_request",
       title: "New Leave Request",
@@ -159,7 +142,7 @@ router.post("/", async (req, res) => {
   try {
     const { employee_id, leave_type, start_date, end_date, reason } = req.body;
     if (!employee_id || !leave_type || !start_date || !end_date) {
-      return res.status(400).json({ error: "Kailangan ng employee, leave type, at petsa." });
+      return res.status(400).json({ error: "Employee, leave type, and dates are required." });
     }
 
     const start = new Date(start_date);
@@ -176,6 +159,26 @@ router.post("/", async (req, res) => {
       "INSERT INTO audit_logs (user_id, action, module, record_id, ip_address) VALUES (:uid,'create','leave_requests',:rid,:ip)",
       { uid: req.user.id, rid: id, ip: req.ip }
     );
+
+    // ✅ Notify admins/HR + the employee owner
+    const empRows = await q(
+      "SELECT COALESCE(NULLIF(full_name, ''), CONCAT(first_name, ' ', last_name)) AS name FROM employees WHERE id = :id",
+      { id: employee_id }
+    );
+    const empName = empRows[0]?.name ?? "An employee";
+
+    await notifyAdmins({
+      type: "leave_request",
+      title: "New Leave Request",
+      message: `${empName} has a ${leave_type} leave request (${start_date} to ${end_date}) filed by an admin.`,
+    });
+
+    await notifyEmployeeOwner(employee_id, {
+      type: "leave_request",
+      title: "Leave Request Filed",
+      message: `A ${leave_type} leave request (${start_date} to ${end_date}) was filed for you.`,
+    });
+
     res.status(201).json({ id });
   } catch (err) {
     console.error("POST /leave-requests error:", err);
@@ -190,7 +193,10 @@ router.patch("/:id/status", async (req, res) => {
       return res.status(400).json({ error: "Invalid status." });
     }
 
-    const rows = await q("SELECT employee_id, leave_type, start_date, end_date FROM leave_requests WHERE id = :id", { id: req.params.id });
+    const rows = await q(
+      "SELECT employee_id, leave_type, start_date, end_date FROM leave_requests WHERE id = :id",
+      { id: req.params.id }
+    );
     if (!rows[0]) return res.status(404).json({ error: "Leave request not found" });
 
     await q("UPDATE leave_requests SET status = :status WHERE id = :id", { status, id: req.params.id });
@@ -199,6 +205,7 @@ router.patch("/:id/status", async (req, res) => {
       { uid: req.user.id, rid: req.params.id, ip: req.ip }
     );
 
+    // ✅ Notify the employee whose request was updated
     await notifyEmployeeOwner(rows[0].employee_id, {
       type: status === "approved" ? "leave_approved" : "leave_rejected",
       title: status === "approved" ? "Leave Request Approved" : "Leave Request Rejected",

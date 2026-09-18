@@ -46,7 +46,6 @@ export function DepartmentsPage() {
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
 
-  // BAGO — Manage Employees modal state
   const [showEmployeesModal, setShowEmployeesModal] = useState(false);
   const [employeesDept, setEmployeesDept] = useState<Department | null>(null);
   const [allEmployees, setAllEmployees] = useState<Employee[]>([]);
@@ -81,7 +80,7 @@ export function DepartmentsPage() {
     e.preventDefault();
     setFormError(null);
     if (!form.name.trim() || !form.code.trim()) {
-      setFormError("Kailangan ng name at code.");
+      setFormError("Name and code are required.");
       return;
     }
     setSaving(true);
@@ -91,7 +90,7 @@ export function DepartmentsPage() {
       setForm(emptyForm);
       fetchDepartments();
     } catch (err: any) {
-      setFormError(err.message ?? "Nabigo ang pag-add ng department.");
+      setFormError(err.message ?? "Failed to add department.");
     } finally {
       setSaving(false);
     }
@@ -119,7 +118,7 @@ export function DepartmentsPage() {
     if (!editingDept) return;
     setEditError(null);
     if (!editForm.name.trim() || !editForm.code.trim()) {
-      setEditError("Kailangan ng name at code.");
+      setEditError("Name and code are required.");
       return;
     }
     setEditSaving(true);
@@ -128,14 +127,14 @@ export function DepartmentsPage() {
       closeEditModal();
       fetchDepartments();
     } catch (err: any) {
-      setEditError(err.message ?? "Nabigo ang pag-update ng department.");
+      setEditError(err.message ?? "Failed to update department.");
     } finally {
       setEditSaving(false);
     }
   }
 
   async function handleDeleteDepartment(dept: Department) {
-    const confirmed = window.confirm(`Sigurado ka bang gusto mong burahin ang department na "${dept.name}"?`);
+    const confirmed = window.confirm(`Are you sure you want to delete "${dept.name}"?`);
     if (!confirmed) return;
 
     setDeleteError(null);
@@ -144,13 +143,11 @@ export function DepartmentsPage() {
       await api.deleteDepartment(dept.id);
       fetchDepartments();
     } catch (err: any) {
-      setDeleteError(err.message ?? "Nabigo ang pag-delete ng department.");
+      setDeleteError(err.message ?? "Failed to delete department.");
     } finally {
       setDeletingId(null);
     }
   }
-
-  // ==== BAGO — Manage Employees (assign / remove) ====
 
   async function openEmployeesModal(dept: Department) {
     setEmployeesDept(dept);
@@ -162,7 +159,7 @@ export function DepartmentsPage() {
       const data = await api.getEmployees();
       setAllEmployees(data);
     } catch (err: any) {
-      setEmployeesError(err.message ?? "Nabigo ang pagkuha ng listahan ng empleyado.");
+      setEmployeesError(err.message ?? "Failed to load employees.");
     } finally {
       setEmployeesLoading(false);
     }
@@ -191,9 +188,9 @@ export function DepartmentsPage() {
       const data = await api.getEmployees();
       setAllEmployees(data);
       setSelectedToAssign("");
-      fetchDepartments(); // para mag-update din agad ang head_count sa cards
+      fetchDepartments();
     } catch (err: any) {
-      setEmployeesError(err.message ?? "Nabigo ang pag-assign ng empleyado.");
+      setEmployeesError(err.message ?? "Failed to assign employee.");
     } finally {
       setAssigningId(null);
     }
@@ -208,46 +205,49 @@ export function DepartmentsPage() {
       setAllEmployees(data);
       fetchDepartments();
     } catch (err: any) {
-      setEmployeesError(err.message ?? "Nabigo ang pag-alis ng empleyado sa department.");
+      setEmployeesError(err.message ?? "Failed to remove employee from department.");
     } finally {
       setAssigningId(null);
     }
   }
 
   return (
-    <div className="p-6 space-y-6">
+    <div className="p-4 sm:p-6 space-y-4 sm:space-y-6">
       <motion.div
         initial={{ opacity: 0, y: -10 }}
         animate={{ opacity: 1, y: 0 }}
-        className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-primary via-violet-600 to-indigo-700 p-6 text-white shadow-lg"
+        className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-primary via-violet-600 to-indigo-700 p-5 sm:p-6 text-white shadow-lg"
       >
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-2xl font-bold flex items-center gap-2"><Building2 className="w-7 h-7" /> Departments</h1>
-            <p className="text-white/70 text-sm mt-1">Manage organizational structure and departments</p>
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+          <div className="min-w-0">
+            <h1 className="text-xl sm:text-2xl font-bold flex items-center gap-2">
+              <Building2 className="w-6 h-6 sm:w-7 sm:h-7" /> Departments
+            </h1>
+            <p className="text-white/70 text-xs sm:text-sm mt-1">Manage organizational structure and departments</p>
           </div>
-          <div className="flex gap-3">
+          <div className="grid grid-cols-2 gap-2 sm:gap-3 shrink-0">
             {[
               { label: "Departments", value: departments.length },
               { label: "Total Staff", value: departments.reduce((a, d) => a + Number(d.head_count), 0) },
             ].map((s) => (
-              <div key={s.label} className="bg-white/10 rounded-xl px-4 py-2 border border-white/20 text-center">
-                <p className="text-white/60 text-xs">{s.label}</p>
-                <p className="text-white font-bold text-xl">{s.value}</p>
+              <div key={s.label} className="bg-white/10 rounded-xl px-3 py-2 sm:px-4 border border-white/20 text-center">
+                <p className="text-white/60 text-[10px] sm:text-xs">{s.label}</p>
+                <p className="text-white font-bold text-lg sm:text-xl">{s.value}</p>
               </div>
             ))}
           </div>
         </div>
       </motion.div>
 
-      <div className="flex items-center gap-3">
-        <div className="relative flex-1 max-w-sm">
+      <div className="flex flex-col gap-3">
+        <div className="relative w-full">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-          <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search departments..." className="w-full pl-9 pr-4 py-2.5 text-sm bg-card border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40" />
+          <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search departments..."
+            className="w-full pl-9 pr-4 py-2.5 text-sm bg-card border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40" />
         </div>
         <button
           onClick={() => { setForm(emptyForm); setFormError(null); setShowAddModal(true); }}
-          className="flex items-center gap-2 px-4 py-2.5 text-sm bg-primary text-white rounded-xl hover:bg-primary/90 transition-colors"
+          className="flex items-center justify-center gap-2 px-4 py-2.5 text-sm bg-primary text-white rounded-xl hover:bg-primary/90 transition-colors"
         >
           <Plus className="w-4 h-4" /> Add Department
         </button>
@@ -268,7 +268,7 @@ export function DepartmentsPage() {
       {!loading && !error && (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {filtered.length === 0 && (
-            <p className="col-span-full text-center text-sm text-muted-foreground py-10">Walang department na nahanap.</p>
+            <p className="col-span-full text-center text-sm text-muted-foreground py-10">No departments found.</p>
           )}
           {filtered.map((dept, i) => (
             <motion.div
@@ -276,15 +276,15 @@ export function DepartmentsPage() {
               initial={{ opacity: 0, y: 12 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: i * 0.05 }}
-              className="bg-card rounded-2xl p-5 shadow-sm border border-border hover:shadow-md transition-shadow"
+              className="bg-card rounded-2xl p-4 sm:p-5 shadow-sm border border-border hover:shadow-md transition-shadow"
             >
               <div className="flex items-start justify-between">
-                <div className="flex items-center gap-3">
-                  <div className="w-11 h-11 rounded-xl flex items-center justify-center" style={{ backgroundColor: `${dept.color}15` }}>
+                <div className="flex items-center gap-3 min-w-0">
+                  <div className="w-11 h-11 rounded-xl flex items-center justify-center shrink-0" style={{ backgroundColor: `${dept.color}15` }}>
                     <Building2 className="w-5 h-5" style={{ color: dept.color }} />
                   </div>
-                  <div>
-                    <p className="font-semibold text-foreground">{dept.name}</p>
+                  <div className="min-w-0">
+                    <p className="font-semibold text-foreground truncate">{dept.name}</p>
                     <p className="text-xs text-muted-foreground font-mono">{dept.code}</p>
                   </div>
                 </div>
@@ -292,7 +292,7 @@ export function DepartmentsPage() {
                   <DropdownMenuTrigger asChild>
                     <button
                       disabled={deletingId === dept.id}
-                      className="w-7 h-7 rounded-lg flex items-center justify-center hover:bg-muted transition-colors disabled:opacity-50"
+                      className="w-7 h-7 rounded-lg flex items-center justify-center hover:bg-muted transition-colors disabled:opacity-50 shrink-0"
                     >
                       {deletingId === dept.id ? (
                         <Loader2 className="w-4 h-4 text-muted-foreground animate-spin" />
@@ -302,7 +302,6 @@ export function DepartmentsPage() {
                     </button>
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="end">
-                    {/* BAGO — Manage Employees option */}
                     <DropdownMenuItem onClick={() => openEmployeesModal(dept)}>
                       <Users className="w-3.5 h-3.5 mr-2" /> Manage Employees
                     </DropdownMenuItem>
@@ -319,7 +318,6 @@ export function DepartmentsPage() {
                 </DropdownMenu>
               </div>
 
-              {/* BAGO — clickable Employees count para diretso sa Manage Employees modal */}
               <div className="mt-4">
                 <button
                   onClick={() => openEmployeesModal(dept)}
@@ -332,12 +330,12 @@ export function DepartmentsPage() {
 
               <div className="mt-3 pt-3 border-t border-border">
                 <div className="flex items-center gap-2">
-                  <div className="w-6 h-6 rounded-full flex items-center justify-center text-xs font-semibold text-white" style={{ backgroundColor: dept.color }}>
+                  <div className="w-6 h-6 rounded-full flex items-center justify-center text-xs font-semibold text-white shrink-0" style={{ backgroundColor: dept.color }}>
                     {dept.manager ? dept.manager.split(" ").map((n) => n[0]).join("") : "—"}
                   </div>
-                  <div>
+                  <div className="min-w-0">
                     <p className="text-xs text-muted-foreground">Manager</p>
-                    <p className="text-sm font-medium text-foreground">{dept.manager ?? "Walang naka-assign"}</p>
+                    <p className="text-sm font-medium text-foreground truncate">{dept.manager ?? "Unassigned"}</p>
                   </div>
                 </div>
               </div>
@@ -346,9 +344,9 @@ export function DepartmentsPage() {
         </div>
       )}
 
-      {/* ==== ADD DEPARTMENT MODAL ==== */}
+      {/* ADD DEPARTMENT MODAL */}
       <Dialog open={showAddModal} onOpenChange={setShowAddModal}>
-        <DialogContent className="sm:max-w-md">
+        <DialogContent className="sm:max-w-md max-h-[85vh] overflow-y-auto">
           <DialogHeader><DialogTitle>Add Department</DialogTitle></DialogHeader>
           <form onSubmit={handleAddDepartment} className="space-y-4">
             {formError && (
@@ -383,7 +381,7 @@ export function DepartmentsPage() {
             </div>
             <div className="space-y-1.5">
               <label className="text-sm font-medium text-foreground">Color</label>
-              <div className="flex gap-2">
+              <div className="flex gap-2 flex-wrap">
                 {COLOR_OPTIONS.map((c) => (
                   <button
                     key={c}
@@ -395,7 +393,7 @@ export function DepartmentsPage() {
                 ))}
               </div>
             </div>
-            <div className="flex justify-end gap-2 pt-2">
+            <div className="flex flex-col sm:flex-row justify-end gap-2 pt-2">
               <button type="button" onClick={() => setShowAddModal(false)} className="px-4 py-2 text-sm rounded-lg border border-border hover:bg-muted/50 transition-colors">Cancel</button>
               <button type="submit" disabled={saving} className="px-4 py-2 text-sm bg-primary text-white rounded-lg hover:bg-primary/90 disabled:opacity-60 transition-colors">
                 {saving ? "Saving..." : "Add Department"}
@@ -405,9 +403,9 @@ export function DepartmentsPage() {
         </DialogContent>
       </Dialog>
 
-      {/* ==== EDIT DEPARTMENT MODAL ==== */}
+      {/* EDIT DEPARTMENT MODAL */}
       <Dialog open={showEditModal} onOpenChange={(open) => { if (!open) closeEditModal(); else setShowEditModal(true); }}>
-        <DialogContent className="sm:max-w-md">
+        <DialogContent className="sm:max-w-md max-h-[85vh] overflow-y-auto">
           <DialogHeader><DialogTitle>Edit Department — {editingDept?.name}</DialogTitle></DialogHeader>
           <form onSubmit={handleEditDepartment} className="space-y-4">
             {editError && (
@@ -439,7 +437,7 @@ export function DepartmentsPage() {
             </div>
             <div className="space-y-1.5">
               <label className="text-sm font-medium text-foreground">Color</label>
-              <div className="flex gap-2">
+              <div className="flex gap-2 flex-wrap">
                 {COLOR_OPTIONS.map((c) => (
                   <button
                     key={c}
@@ -451,7 +449,7 @@ export function DepartmentsPage() {
                 ))}
               </div>
             </div>
-            <div className="flex justify-end gap-2 pt-2">
+            <div className="flex flex-col sm:flex-row justify-end gap-2 pt-2">
               <button type="button" onClick={closeEditModal} className="px-4 py-2 text-sm rounded-lg border border-border hover:bg-muted/50 transition-colors">Cancel</button>
               <button type="submit" disabled={editSaving} className="px-4 py-2 text-sm bg-primary text-white rounded-lg hover:bg-primary/90 disabled:opacity-60 transition-colors">
                 {editSaving ? "Saving..." : "Save Changes"}
@@ -461,9 +459,9 @@ export function DepartmentsPage() {
         </DialogContent>
       </Dialog>
 
-      {/* ==== BAGO: MANAGE EMPLOYEES MODAL (assign / remove) ==== */}
+      {/* MANAGE EMPLOYEES MODAL */}
       <Dialog open={showEmployeesModal} onOpenChange={(open) => { if (!open) closeEmployeesModal(); }}>
-        <DialogContent className="sm:max-w-lg">
+        <DialogContent className="sm:max-w-lg max-h-[85vh] overflow-y-auto">
           <DialogHeader><DialogTitle>Manage Employees — {employeesDept?.name}</DialogTitle></DialogHeader>
 
           {employeesError && (
@@ -476,16 +474,15 @@ export function DepartmentsPage() {
             </div>
           ) : (
             <div className="space-y-4">
-              {/* Assign new employee */}
               <div className="space-y-1.5">
                 <label className="text-sm font-medium text-foreground">Assign an employee to this department</label>
-                <div className="flex gap-2">
+                <div className="flex flex-col sm:flex-row gap-2">
                   <select
                     value={selectedToAssign}
                     onChange={(e) => setSelectedToAssign(e.target.value)}
                     className="flex-1 px-3.5 py-2.5 rounded-lg border border-border bg-input-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/20"
                   >
-                    <option value="">Piliin ang empleyado...</option>
+                    <option value="">Select employee...</option>
                     {unassignedOrOtherDeptEmployees.map((emp) => (
                       <option key={emp.id} value={emp.id}>
                         {emp.full_name} — {emp.job_title}
@@ -501,27 +498,26 @@ export function DepartmentsPage() {
                   </button>
                 </div>
                 {unassignedOrOtherDeptEmployees.length === 0 && (
-                  <p className="text-xs text-muted-foreground">Walang ibang empleyado na pwedeng i-assign.</p>
+                  <p className="text-xs text-muted-foreground">No other employees available to assign.</p>
                 )}
               </div>
 
-              {/* Currently assigned employees */}
               <div className="space-y-1.5">
-                <label className="text-sm font-medium text-foreground">Kasalukuyang naka-assign ({assignedEmployees.length})</label>
+                <label className="text-sm font-medium text-foreground">Currently assigned ({assignedEmployees.length})</label>
                 <div className="border border-border rounded-lg divide-y divide-border max-h-64 overflow-y-auto">
                   {assignedEmployees.length === 0 && (
-                    <p className="p-4 text-sm text-muted-foreground text-center">Walang empleyadong naka-assign sa department na ito.</p>
+                    <p className="p-4 text-sm text-muted-foreground text-center">No employees assigned to this department.</p>
                   )}
                   {assignedEmployees.map((emp) => (
-                    <div key={emp.id} className="flex items-center justify-between px-3.5 py-2.5">
-                      <div>
-                        <p className="text-sm font-medium text-foreground">{emp.full_name}</p>
-                        <p className="text-xs text-muted-foreground">{emp.job_title}</p>
+                    <div key={emp.id} className="flex items-center justify-between px-3.5 py-2.5 gap-2">
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium text-foreground truncate">{emp.full_name}</p>
+                        <p className="text-xs text-muted-foreground truncate">{emp.job_title}</p>
                       </div>
                       <button
                         onClick={() => handleRemoveEmployee(emp)}
                         disabled={assigningId === emp.id}
-                        className="flex items-center gap-1 px-2.5 py-1.5 text-xs text-destructive border border-destructive/30 rounded-lg hover:bg-destructive/10 disabled:opacity-50 transition-colors"
+                        className="flex items-center gap-1 px-2.5 py-1.5 text-xs text-destructive border border-destructive/30 rounded-lg hover:bg-destructive/10 disabled:opacity-50 transition-colors shrink-0"
                       >
                         {assigningId === emp.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <UserMinus className="w-3 h-3" />}
                         Remove

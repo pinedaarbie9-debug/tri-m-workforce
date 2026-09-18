@@ -12,6 +12,21 @@ export function setToken(token: string | null) {
   else localStorage.removeItem("wms_token");
 }
 
+// Custom error class para madaling ma-extract ang lockout info sa AuthContext
+export class ApiError extends Error {
+  status: number;
+  secondsLeft?: number;
+  lockedUntil?: string;
+
+  constructor(message: string, status: number, secondsLeft?: number, lockedUntil?: string) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+    this.secondsLeft = secondsLeft;
+    this.lockedUntil = lockedUntil;
+  }
+}
+
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const token = getToken();
   const res = await fetch(`${API_URL}${path}`, {
@@ -25,7 +40,12 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
-    throw new Error(body.error ?? `Request failed: ${res.status}`);
+    throw new ApiError(
+      body.error ?? `Request failed: ${res.status}`,
+      res.status,
+      body.seconds_left,
+      body.locked_until
+    );
   }
   if (res.status === 204) return undefined as T;
   return res.json();
@@ -34,17 +54,36 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 export const api = {
   // ---- Auth ----
   login: (email: string, password: string) =>
-    request<{ token: string; user: any }>("/auth/login", {
+    request<{ token: string; user: any; requires_mfa?: boolean; temp_token?: string }>("/auth/login", {
       method: "POST",
       body: JSON.stringify({ email, password }),
     }),
   faceLogin: (face_descriptor: number[]) =>
-    request<{ token: string; user: any }>("/auth/face-login", {
+    request<{ token: string; user: any; requires_mfa?: boolean; temp_token?: string }>("/auth/face-login", {
       method: "POST",
       body: JSON.stringify({ face_descriptor }),
     }),
+  verifyMfa: (temp_token: string, token: string) =>
+    request<{ token: string; user: any }>("/auth/verify-mfa", {
+      method: "POST",
+      body: JSON.stringify({ temp_token, token }),
+    }),
   me: () => request<any>("/auth/me"),
   logout: () => request<{ ok: true }>("/auth/logout", { method: "POST" }),
+
+  // ---- MFA ----
+  mfaStatus: () => request<{ mfa_enabled: boolean }>("/mfa/status"),
+  mfaSetup: () => request<{ secret: string; qr_code: string; otpauth_url: string }>("/mfa/setup", { method: "POST" }),
+  mfaVerifySetup: (token: string) =>
+    request<{ ok: true; backup_codes: string[]; message: string }>("/mfa/verify-setup", {
+      method: "POST",
+      body: JSON.stringify({ token }),
+    }),
+  mfaDisable: (token: string) =>
+    request<{ ok: true; message: string }>("/mfa/disable", {
+      method: "POST",
+      body: JSON.stringify({ token }),
+    }),
 
   // ---- Employees ----
   getEmployees: () => request<any[]>("/employees"),
@@ -123,7 +162,7 @@ export const api = {
   getEmployeeShifts: (from: string, to: string) => request<any[]>(`/shifts/assignments?from=${from}&to=${to}`),
   assignShift: (data: any) => request<{ id: string }>("/shifts/assignments", { method: "POST", body: JSON.stringify(data) }),
 
-  // ---- Employee Portal ("me" — sariling data lang ng naka-login na empleyado) ----
+  // ---- Employee Portal ----
   getMyProfile: () => request<any>("/employees/me"),
   updateMyProfile: (data: any) => request<{ ok: true }>("/employees/me", { method: "PATCH", body: JSON.stringify(data) }),
   getMyAttendance: (from?: string, to?: string) => {
@@ -142,7 +181,7 @@ export const api = {
   markNotificationsRead: () => request<{ ok: true }>("/notifications/read-all", { method: "PATCH" }),
   deleteNotification: (id: string) => request<{ ok: true }>(`/notifications/${id}`, { method: "DELETE" }),
 
-  // ---- Settings (System Settings page) ----
+  // ---- Settings ----
   getSettings: () => request<any[]>("/settings"),
   updateSettings: (updates: { key: string; value: any }[]) =>
     request<{ ok: true }>("/settings", { method: "PATCH", body: JSON.stringify({ updates }) }),
@@ -171,10 +210,10 @@ export const api = {
   getAuditExportReport: () => request<{ type: string; rows: any[] }>("/reports/audit-export"),
 };
 
-// ---- CSV export helper — client-side, walang kailangang backend endpoint ----
+// ---- CSV export helper ----
 export function exportToCsv(filename: string, rows: Record<string, any>[]) {
   if (!rows || rows.length === 0) {
-    alert("Walang data na pwedeng i-export.");
+    alert("No data to export.");
     return;
   }
   const headers = Object.keys(rows[0]);

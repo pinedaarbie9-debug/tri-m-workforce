@@ -84,7 +84,7 @@ export function TimesheetsPage() {
     e.preventDefault();
     setFormError(null);
     if (!form.employee_id || !form.period_start || !form.period_end) {
-      setFormError("Kailangan ng employee, period start, at period end.");
+      setFormError("Employee, period start, and period end are required.");
       return;
     }
     setSaving(true);
@@ -93,7 +93,7 @@ export function TimesheetsPage() {
       setShowGenerateModal(false);
       fetchAll();
     } catch (err: any) {
-      setFormError(err.message ?? "Nabigo ang paggawa ng timesheet.");
+      setFormError(err.message ?? "Failed to generate timesheet.");
     } finally {
       setSaving(false);
     }
@@ -104,32 +104,30 @@ export function TimesheetsPage() {
       await api.updateTimesheetStatus(id, status);
       fetchAll();
     } catch (err: any) {
-      alert(err.message ?? "Nabigo ang pag-update ng status.");
+      alert(err.message ?? "Failed to update status.");
     }
   }
 
   return (
-    <div className="p-6 space-y-6">
-      {/* Banner */}
-      <motion.div
-        initial={{ opacity: 0, y: -10 }}
-        animate={{ opacity: 1, y: 0 }}
-        className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-primary via-violet-600 to-indigo-700 p-6 text-white shadow-lg"
-      >
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-2xl font-bold flex items-center gap-2"><FileSpreadsheet className="w-7 h-7" /> Timesheet Management</h1>
-            <p className="text-white/70 text-sm mt-1">Track, review and approve employee timesheets</p>
+    <div className="p-4 sm:p-6 space-y-4 sm:space-y-6">
+      <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }}
+        className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-primary via-violet-600 to-indigo-700 p-5 sm:p-6 text-white shadow-lg">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+          <div className="min-w-0">
+            <h1 className="text-xl sm:text-2xl font-bold flex items-center gap-2">
+              <FileSpreadsheet className="w-6 h-6 sm:w-7 sm:h-7" /> Timesheet Management
+            </h1>
+            <p className="text-white/70 text-xs sm:text-sm mt-1">Track, review and approve employee timesheets</p>
           </div>
-          <div className="flex gap-3">
+          <div className="grid grid-cols-3 gap-2 sm:gap-3 shrink-0">
             {[
               { label: "Regular Hours", value: `${totalRegular.toFixed(1)}h` },
               { label: "Overtime Hours", value: `${totalOvertime.toFixed(1)}h` },
-              { label: "Pending Review", value: pending },
+              { label: "Pending", value: pending },
             ].map((s) => (
-              <div key={s.label} className="bg-white/10 rounded-xl px-4 py-2 border border-white/20 text-center">
-                <p className="text-white/60 text-xs">{s.label}</p>
-                <p className="text-white font-bold text-xl">{s.value}</p>
+              <div key={s.label} className="bg-white/10 rounded-xl px-2 py-2 sm:px-4 border border-white/20 text-center">
+                <p className="text-white/60 text-[10px] sm:text-xs">{s.label}</p>
+                <p className="text-white font-bold text-sm sm:text-xl">{s.value}</p>
               </div>
             ))}
           </div>
@@ -147,55 +145,46 @@ export function TimesheetsPage() {
 
       {!loading && !error && (
         <>
-          {/* Toolbar */}
-          <div className="flex flex-col sm:flex-row gap-3">
-            <div className="relative flex-1">
+          <div className="flex flex-col gap-3">
+            <div className="relative w-full">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-              <input
-                value={search}
-                onChange={(e) => { setSearch(e.target.value); setPage(1); }}
-                placeholder="Search employees..."
-                className="w-full pl-9 pr-4 py-2.5 text-sm bg-card border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40"
-              />
+              <input value={search} onChange={(e) => { setSearch(e.target.value); setPage(1); }} placeholder="Search employees..."
+                className="w-full pl-9 pr-4 py-2.5 text-sm bg-card border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40" />
             </div>
-            <select
-              value={statusFilter}
-              onChange={(e) => { setStatusFilter(e.target.value as TimesheetStatus | "all"); setPage(1); }}
-              className="px-3 py-2.5 text-sm bg-card border border-border rounded-xl focus:outline-none"
-            >
-              <option value="all">All Status</option>
-              <option value="draft">Draft</option>
-              <option value="submitted">Submitted</option>
-              <option value="approved">Approved</option>
-              <option value="rejected">Rejected</option>
-            </select>
-            <button
-              onClick={openGenerateModal}
-              className="flex items-center gap-2 px-4 py-2.5 text-sm bg-primary text-white rounded-xl hover:bg-primary/90 transition-colors"
-            >
-              <Plus className="w-4 h-4" /> Generate Timesheet
-            </button>
+            <div className="grid grid-cols-2 sm:flex gap-2 sm:gap-3">
+              <select value={statusFilter} onChange={(e) => { setStatusFilter(e.target.value as TimesheetStatus | "all"); setPage(1); }}
+                className="col-span-2 sm:col-span-1 px-3 py-2.5 text-sm bg-card border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary/20">
+                <option value="all">All Status</option>
+                <option value="draft">Draft</option>
+                <option value="submitted">Submitted</option>
+                <option value="approved">Approved</option>
+                <option value="rejected">Rejected</option>
+              </select>
+              <button onClick={openGenerateModal}
+                className="col-span-2 sm:col-span-1 flex items-center justify-center gap-2 px-4 py-2.5 text-sm bg-primary text-white rounded-xl hover:bg-primary/90 transition-colors">
+                <Plus className="w-4 h-4" /> Generate Timesheet
+              </button>
+            </div>
           </div>
 
-          {/* Table */}
           <div className="bg-card rounded-2xl shadow-sm border border-border overflow-hidden">
             <div className="overflow-x-auto">
-              <table className="w-full">
+              <table className="w-full min-w-[900px]">
                 <thead>
                   <tr className="border-b border-border bg-muted/30">
-                    <th className="text-left px-5 py-3.5 text-xs font-semibold text-muted-foreground uppercase tracking-wide">Employee</th>
-                    <th className="text-left px-5 py-3.5 text-xs font-semibold text-muted-foreground uppercase tracking-wide">Period</th>
-                    <th className="text-right px-5 py-3.5 text-xs font-semibold text-muted-foreground uppercase tracking-wide">Regular</th>
-                    <th className="text-right px-5 py-3.5 text-xs font-semibold text-muted-foreground uppercase tracking-wide">Overtime</th>
-                    <th className="text-right px-5 py-3.5 text-xs font-semibold text-muted-foreground uppercase tracking-wide">Total</th>
-                    <th className="text-left px-5 py-3.5 text-xs font-semibold text-muted-foreground uppercase tracking-wide">Submitted</th>
-                    <th className="text-left px-5 py-3.5 text-xs font-semibold text-muted-foreground uppercase tracking-wide">Status</th>
-                    <th className="px-5 py-3.5" />
+                    <th className="text-left px-4 sm:px-5 py-3.5 text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap">Employee</th>
+                    <th className="text-left px-4 sm:px-5 py-3.5 text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap">Period</th>
+                    <th className="text-right px-4 sm:px-5 py-3.5 text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap">Regular</th>
+                    <th className="text-right px-4 sm:px-5 py-3.5 text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap">Overtime</th>
+                    <th className="text-right px-4 sm:px-5 py-3.5 text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap">Total</th>
+                    <th className="text-left px-4 sm:px-5 py-3.5 text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap">Submitted</th>
+                    <th className="text-left px-4 sm:px-5 py-3.5 text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap">Status</th>
+                    <th className="px-4 sm:px-5 py-3.5" />
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-border">
                   {paginated.length === 0 && (
-                    <tr><td colSpan={8} className="px-5 py-10 text-center text-sm text-muted-foreground">Walang timesheet na nahanap.</td></tr>
+                    <tr><td colSpan={8} className="px-5 py-10 text-center text-sm text-muted-foreground">No timesheets found.</td></tr>
                   )}
                   {paginated.map((ts) => {
                     const cfg = statusConfig[ts.status];
@@ -203,42 +192,36 @@ export function TimesheetsPage() {
                     const totalHours = Number(ts.total_regular_hours ?? 0) + Number(ts.total_overtime_hours ?? 0);
                     return (
                       <tr key={ts.id} className="hover:bg-muted/20 transition-colors">
-                        <td className="px-5 py-4">
+                        <td className="px-4 sm:px-5 py-4">
                           <div className="flex items-center gap-3">
-                            <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center text-primary font-semibold text-xs">
+                            <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center text-primary font-semibold text-xs shrink-0">
                               {ts.employee_name.split(" ").map((n) => n[0]).join("")}
                             </div>
-                            <div>
-                              <p className="text-sm font-medium text-foreground">{ts.employee_name}</p>
-                              <p className="text-xs text-muted-foreground">{ts.department ?? "—"}</p>
+                            <div className="min-w-0">
+                              <p className="text-sm font-medium text-foreground whitespace-nowrap">{ts.employee_name}</p>
+                              <p className="text-xs text-muted-foreground whitespace-nowrap">{ts.department ?? "—"}</p>
                             </div>
                           </div>
                         </td>
-                        <td className="px-5 py-4 text-sm text-muted-foreground">{ts.period_start?.slice(0, 10)} – {ts.period_end?.slice(0, 10)}</td>
-                        <td className="px-5 py-4 text-sm text-right font-medium text-foreground">{Number(ts.total_regular_hours ?? 0).toFixed(1)}h</td>
-                        <td className="px-5 py-4 text-sm text-right font-medium text-orange-600">
+                        <td className="px-4 sm:px-5 py-4 text-sm text-muted-foreground whitespace-nowrap">{ts.period_start?.slice(0, 10)} – {ts.period_end?.slice(0, 10)}</td>
+                        <td className="px-4 sm:px-5 py-4 text-sm text-right font-medium text-foreground whitespace-nowrap">{Number(ts.total_regular_hours ?? 0).toFixed(1)}h</td>
+                        <td className="px-4 sm:px-5 py-4 text-sm text-right font-medium text-orange-600 whitespace-nowrap">
                           {Number(ts.total_overtime_hours ?? 0) > 0 ? `+${Number(ts.total_overtime_hours).toFixed(1)}h` : "—"}
                         </td>
-                        <td className="px-5 py-4 text-sm text-right font-bold text-foreground">{totalHours.toFixed(1)}h</td>
-                        <td className="px-5 py-4 text-sm text-muted-foreground">{ts.submitted_at?.slice(0, 10) ?? "—"}</td>
-                        <td className="px-5 py-4">
-                          <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium border ${cfg.className}`}>
+                        <td className="px-4 sm:px-5 py-4 text-sm text-right font-bold text-foreground whitespace-nowrap">{totalHours.toFixed(1)}h</td>
+                        <td className="px-4 sm:px-5 py-4 text-sm text-muted-foreground whitespace-nowrap">{ts.submitted_at?.slice(0, 10) ?? "—"}</td>
+                        <td className="px-4 sm:px-5 py-4">
+                          <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium border whitespace-nowrap ${cfg.className}`}>
                             <Icon className="w-3 h-3" /> {cfg.label}
                           </span>
                         </td>
-                        <td className="px-5 py-4">
+                        <td className="px-4 sm:px-5 py-4">
                           {ts.status === "submitted" && (
                             <div className="flex items-center gap-1">
-                              <button
-                                onClick={() => handleDecision(ts.id, "approved")}
-                                className="w-6 h-6 rounded-full bg-emerald-100 flex items-center justify-center hover:bg-emerald-200 transition-colors"
-                              >
+                              <button onClick={() => handleDecision(ts.id, "approved")} className="w-6 h-6 rounded-full bg-emerald-100 flex items-center justify-center hover:bg-emerald-200 transition-colors">
                                 <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
                               </button>
-                              <button
-                                onClick={() => handleDecision(ts.id, "rejected")}
-                                className="w-6 h-6 rounded-full bg-red-100 flex items-center justify-center hover:bg-red-200 transition-colors"
-                              >
+                              <button onClick={() => handleDecision(ts.id, "rejected")} className="w-6 h-6 rounded-full bg-red-100 flex items-center justify-center hover:bg-red-200 transition-colors">
                                 <XCircle className="w-3.5 h-3.5 text-red-600" />
                               </button>
                             </div>
@@ -250,13 +233,13 @@ export function TimesheetsPage() {
                 </tbody>
               </table>
             </div>
-            <div className="flex items-center justify-between px-5 py-3.5 border-t border-border">
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-3 px-4 sm:px-5 py-3.5 border-t border-border">
               <p className="text-xs text-muted-foreground">
                 Showing {filtered.length === 0 ? 0 : (page - 1) * perPage + 1}–{Math.min(page * perPage, filtered.length)} of {filtered.length} timesheets
               </p>
-              <div className="flex items-center gap-1">
+              <div className="flex items-center gap-1 flex-wrap justify-center">
                 <button disabled={page <= 1} onClick={() => setPage((p) => p - 1)} className="w-8 h-8 rounded-lg flex items-center justify-center hover:bg-muted disabled:opacity-40 transition-colors"><ChevronLeft className="w-4 h-4" /></button>
-                {Array.from({ length: totalPages }, (_, i) => i + 1).map((p) => (
+                {Array.from({ length: totalPages }, (_, i) => i + 1).slice(0, 5).map((p) => (
                   <button key={p} onClick={() => setPage(p)} className={`w-8 h-8 rounded-lg text-xs font-medium transition-colors ${p === page ? "bg-primary text-white" : "hover:bg-muted text-muted-foreground"}`}>{p}</button>
                 ))}
                 <button disabled={page >= totalPages} onClick={() => setPage((p) => p + 1)} className="w-8 h-8 rounded-lg flex items-center justify-center hover:bg-muted disabled:opacity-40 transition-colors"><ChevronRight className="w-4 h-4" /></button>
@@ -266,9 +249,8 @@ export function TimesheetsPage() {
         </>
       )}
 
-      {/* Generate Timesheet Modal */}
       <Dialog open={showGenerateModal} onOpenChange={setShowGenerateModal}>
-        <DialogContent className="sm:max-w-md">
+        <DialogContent className="sm:max-w-md max-h-[85vh] overflow-y-auto">
           <DialogHeader><DialogTitle>Generate Timesheet</DialogTitle></DialogHeader>
           <form onSubmit={handleGenerate} className="space-y-4">
             {formError && (
@@ -278,7 +260,7 @@ export function TimesheetsPage() {
               <label className="text-sm font-medium text-foreground">Employee</label>
               <select value={form.employee_id} onChange={(e) => setForm({ ...form, employee_id: e.target.value })}
                 className="w-full px-3.5 py-2.5 rounded-lg border border-border bg-input-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/20">
-                <option value="">Piliin ang empleyado</option>
+                <option value="">Select employee</option>
                 {employees.map((emp) => (
                   <option key={emp.id} value={emp.id}>{emp.full_name}</option>
                 ))}
@@ -296,8 +278,8 @@ export function TimesheetsPage() {
                   className="w-full px-3.5 py-2.5 rounded-lg border border-border bg-input-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/20" />
               </div>
             </div>
-            <p className="text-xs text-muted-foreground">Awtomatikong kukunin ang regular at overtime hours mula sa attendance records ng empleyado sa loob ng napiling period.</p>
-            <div className="flex justify-end gap-2 pt-2">
+            <p className="text-xs text-muted-foreground">Regular and overtime hours are automatically computed from the employee's attendance records within the selected period.</p>
+            <div className="flex flex-col sm:flex-row justify-end gap-2 pt-2">
               <button type="button" onClick={() => setShowGenerateModal(false)} className="px-4 py-2 text-sm rounded-lg border border-border hover:bg-muted/50 transition-colors">Cancel</button>
               <button type="submit" disabled={saving} className="px-4 py-2 text-sm bg-primary text-white rounded-lg hover:bg-primary/90 disabled:opacity-60 transition-colors">
                 {saving ? "Generating..." : "Generate"}

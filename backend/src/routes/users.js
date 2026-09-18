@@ -9,6 +9,15 @@ const router = Router();
 router.use(requireAuth);
 router.use(requireRole("admin"));
 
+// FIX: bagong helper — minimum 8 chars, may uppercase, lowercase, at number
+function isStrongPassword(password) {
+  if (typeof password !== "string" || password.length < 8) return false;
+  if (!/[A-Z]/.test(password)) return false;
+  if (!/[a-z]/.test(password)) return false;
+  if (!/[0-9]/.test(password)) return false;
+  return true;
+}
+
 router.get("/", async (req, res) => {
   try {
     const rows = await q(`
@@ -33,6 +42,12 @@ router.post("/", async (req, res) => {
     const { full_name, email, password, role, employee_id, status } = req.body;
     if (!full_name || !email || !password) {
       return res.status(400).json({ error: "Kailangan ng full name, email, at password." });
+    }
+    // FIX: i-enforce ang password strength bago tuluyang gumawa ng account
+    if (!isStrongPassword(password)) {
+      return res.status(400).json({
+        error: "Kailangan ng hindi bababa sa 8 characters ang password, may malaking titik, maliit na titik, at numero.",
+      });
     }
     if ((role ?? "employee") === "employee" && !employee_id) {
       return res.status(400).json({ error: "Kailangan mag-link ng employee record para sa role na 'Employee'." });
@@ -84,7 +99,16 @@ router.patch("/:id", async (req, res) => {
       if (req.body[key] !== undefined) updates[key] = req.body[key];
     }
     if (req.body.password) {
+      // FIX: i-enforce din ang password strength pag nagpapalit ng password
+      if (!isStrongPassword(req.body.password)) {
+        return res.status(400).json({
+          error: "Kailangan ng hindi bababa sa 8 characters ang password, may malaking titik, maliit na titik, at numero.",
+        });
+      }
       updates.password_hash = await bcrypt.hash(req.body.password, 10);
+      // FIX: i-reset ang lockout state pag pinalitan ng admin ang password
+      updates.failed_login_attempts = 0;
+      updates.locked_until = null;
     }
     if (Object.keys(updates).length === 0) {
       return res.status(400).json({ error: "Walang laman ang update." });
@@ -100,8 +124,6 @@ router.patch("/:id", async (req, res) => {
       }
     }
 
-    // FIX: kunin din ang employee_id at status bago i-update, kailangan natin
-    // ito para malaman kung kailangan bang i-restore ang naka-link na employee.
     const before = await q(
       "SELECT full_name, role, status, employee_id FROM users WHERE id = :id",
       { id: req.params.id }
@@ -111,11 +133,6 @@ router.patch("/:id", async (req, res) => {
     const setClause = Object.keys(updates).map((k) => `${k} = :${k}`).join(", ");
     await q(`UPDATE users SET ${setClause} WHERE id = :id`, { ...updates, id: req.params.id });
 
-    // FIX: kapag "active" ang bagong status ng user AT may naka-link na employee_id
-    // (ang bago kung binago sa parehong request, o ang luma kung hindi ginalaw),
-    // i-restore din natin ang linked employee record kung na-soft-delete ito dati.
-    // Ito ang gustong behavior: "pag ni-activate ko ang account, babalik din ang
-    // employee sa Employees page."
     const finalEmployeeId = updates.employee_id !== undefined ? updates.employee_id : before[0].employee_id;
     const becomingActive = updates.status === "active" && before[0].status !== "active";
 

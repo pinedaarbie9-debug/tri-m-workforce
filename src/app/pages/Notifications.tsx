@@ -87,21 +87,22 @@ export function NotificationsPage() {
   }
 
   return (
-    <div className="p-6 space-y-6">
-      {/* Banner */}
+    <div className="p-4 sm:p-6 space-y-4 sm:space-y-6">
       <motion.div
         initial={{ opacity: 0, y: -10 }}
         animate={{ opacity: 1, y: 0 }}
-        className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-primary via-violet-600 to-indigo-700 p-6 text-white shadow-lg"
+        className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-primary via-violet-600 to-indigo-700 p-5 sm:p-6 text-white shadow-lg"
       >
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-2xl font-bold flex items-center gap-2"><Bell className="w-7 h-7" /> Notifications</h1>
-            <p className="text-white/70 text-sm mt-1">Stay updated on workforce activities</p>
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div className="min-w-0">
+            <h1 className="text-xl sm:text-2xl font-bold flex items-center gap-2">
+              <Bell className="w-6 h-6 sm:w-7 sm:h-7" /> Notifications
+            </h1>
+            <p className="text-white/70 text-xs sm:text-sm mt-1">Stay updated on workforce activities</p>
           </div>
-          <div className="bg-white/10 rounded-xl px-4 py-2 border border-white/20 text-center">
-            <p className="text-white/60 text-xs">Unread</p>
-            <p className="text-white font-bold text-xl">{unreadCount}</p>
+          <div className="bg-white/10 rounded-xl px-3 py-2 sm:px-4 border border-white/20 text-center shrink-0 self-start">
+            <p className="text-white/60 text-[10px] sm:text-xs">Unread</p>
+            <p className="text-white font-bold text-lg sm:text-xl">{unreadCount}</p>
           </div>
         </div>
       </motion.div>
@@ -117,32 +118,28 @@ export function NotificationsPage() {
 
       {!loading && !error && (
         <>
-          {/* Toolbar */}
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <div className="flex items-center gap-1 bg-muted rounded-xl p-1">
-                {(["all", "unread"] as const).map((f) => (
-                  <button
-                    key={f}
-                    onClick={() => setFilter(f)}
-                    className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors capitalize ${filter === f ? "bg-card shadow text-foreground" : "text-muted-foreground hover:text-foreground"}`}
-                  >
-                    {f === "all" ? `All (${notifications.length})` : `Unread (${unreadCount})`}
-                  </button>
-                ))}
-              </div>
+          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+            <div className="flex items-center gap-1 bg-muted rounded-xl p-1 w-full sm:w-fit">
+              {(["all", "unread"] as const).map((f) => (
+                <button
+                  key={f}
+                  onClick={() => setFilter(f)}
+                  className={`flex-1 sm:flex-none px-3 sm:px-4 py-2 rounded-lg text-sm font-medium transition-colors capitalize ${filter === f ? "bg-card shadow text-foreground" : "text-muted-foreground hover:text-foreground"}`}
+                >
+                  {f === "all" ? `All (${notifications.length})` : `Unread (${unreadCount})`}
+                </button>
+              ))}
             </div>
             {unreadCount > 0 && (
               <button
                 onClick={markAllRead}
-                className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-primary hover:bg-primary/10 rounded-xl transition-colors"
+                className="flex items-center gap-2 px-3 sm:px-4 py-2 text-sm font-medium text-primary hover:bg-primary/10 rounded-xl transition-colors w-full sm:w-auto justify-center"
               >
                 <Check className="w-4 h-4" /> Mark all as read
               </button>
             )}
           </div>
 
-          {/* Notification List */}
           <div className="space-y-2">
             {filtered.map((notif, i) => {
               const cfg = typeConfig[notif.type] ?? typeConfig.system;
@@ -153,25 +150,25 @@ export function NotificationsPage() {
                   initial={{ opacity: 0, x: -12 }}
                   animate={{ opacity: 1, x: 0 }}
                   transition={{ delay: i * 0.04 }}
-                  className={`flex items-start gap-4 p-4 rounded-2xl border transition-all group ${
+                  className={`flex items-start gap-3 sm:gap-4 p-3 sm:p-4 rounded-2xl border transition-all group ${
                     notif.is_read ? "bg-card border-border" : "bg-primary/5 border-primary/20"
                   }`}
                 >
-                  <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${cfg.bg}`}>
-                    <Icon className={`w-5 h-5 ${cfg.color}`} />
+                  <div className={`w-9 h-9 sm:w-10 sm:h-10 rounded-xl flex items-center justify-center shrink-0 ${cfg.bg}`}>
+                    <Icon className={`w-4 h-4 sm:w-5 sm:h-5 ${cfg.color}`} />
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-start justify-between gap-2">
-                      <div>
-                        <p className="text-sm font-semibold text-foreground">
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm font-semibold text-foreground break-words">
                           {notif.title}
                           {!notif.is_read && (
                             <span className="ml-2 inline-block w-2 h-2 bg-primary rounded-full align-middle" />
                           )}
                         </p>
-                        <p className="text-sm text-muted-foreground mt-0.5 leading-relaxed">{notif.message}</p>
+                        <p className="text-sm text-muted-foreground mt-0.5 leading-relaxed break-words">{notif.message}</p>
                       </div>
-                      <div className="flex items-center gap-1 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <div className="flex items-center gap-1 shrink-0 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity">
                         {!notif.is_read && (
                           <button
                             onClick={() => markRead(notif.id)}

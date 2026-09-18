@@ -24,13 +24,7 @@ const leaveTypeOptions: LeaveType[] = ["annual", "sick", "maternity", "paternity
 
 const POLL_MS = 15000;
 
-function NewLeaveRequestModal({
-  onClose,
-  onCreated,
-}: {
-  onClose: () => void;
-  onCreated: () => void;
-}) {
+function NewLeaveRequestModal({ onClose, onCreated }: { onClose: () => void; onCreated: () => void; }) {
   const [employees, setEmployees] = useState<any[]>([]);
   const [loadingEmployees, setLoadingEmployees] = useState(true);
   const [submitting, setSubmitting] = useState(false);
@@ -43,8 +37,7 @@ function NewLeaveRequestModal({
   const [reason, setReason] = useState("");
 
   useEffect(() => {
-    api
-      .getEmployees()
+    api.getEmployees()
       .then((data) => setEmployees(data))
       .catch((err) => setFormError(err.message ?? "Failed to load employees"))
       .finally(() => setLoadingEmployees(false));
@@ -54,9 +47,9 @@ function NewLeaveRequestModal({
     e.preventDefault();
     setFormError(null);
 
-    if (!employeeId) return setFormError("Pumili ng employee.");
-    if (!startDate || !endDate) return setFormError("Kumpletuhin ang start at end date.");
-    if (new Date(endDate) < new Date(startDate)) return setFormError("Mali ang date range.");
+    if (!employeeId) return setFormError("Please select an employee.");
+    if (!startDate || !endDate) return setFormError("Please complete the start and end dates.");
+    if (new Date(endDate) < new Date(startDate)) return setFormError("Invalid date range.");
 
     setSubmitting(true);
     try {
@@ -83,9 +76,9 @@ function NewLeaveRequestModal({
         animate={{ opacity: 1, scale: 1, y: 0 }}
         exit={{ opacity: 0, scale: 0.95, y: 10 }}
         onClick={(e) => e.stopPropagation()}
-        className="w-full max-w-md bg-card rounded-2xl shadow-xl border border-border overflow-hidden"
+        className="w-full max-w-md bg-card rounded-2xl shadow-xl border border-border overflow-hidden max-h-[90vh] overflow-y-auto"
       >
-        <div className="flex items-center justify-between px-5 py-4 border-b border-border">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-border sticky top-0 bg-card z-10">
           <h2 className="font-semibold text-foreground">New Leave Request</h2>
           <button onClick={onClose} className="w-7 h-7 rounded-full flex items-center justify-center hover:bg-muted transition-colors">
             <X className="w-4 h-4" />
@@ -99,13 +92,9 @@ function NewLeaveRequestModal({
 
           <div>
             <label className="text-xs font-medium text-muted-foreground">Employee</label>
-            <select
-              value={employeeId}
-              onChange={(e) => setEmployeeId(e.target.value)}
-              disabled={loadingEmployees}
-              className="mt-1 w-full px-3 py-2 text-sm bg-background border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/20"
-            >
-              <option value="">{loadingEmployees ? "Loading..." : "Piliin ang employee"}</option>
+            <select value={employeeId} onChange={(e) => setEmployeeId(e.target.value)} disabled={loadingEmployees}
+              className="mt-1 w-full px-3 py-2 text-sm bg-background border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/20">
+              <option value="">{loadingEmployees ? "Loading..." : "Select employee"}</option>
               {employees.map((emp) => (
                 <option key={emp.id} value={emp.id}>{emp.full_name}</option>
               ))}
@@ -114,11 +103,8 @@ function NewLeaveRequestModal({
 
           <div>
             <label className="text-xs font-medium text-muted-foreground">Leave Type</label>
-            <select
-              value={leaveType}
-              onChange={(e) => setLeaveType(e.target.value as LeaveType)}
-              className="mt-1 w-full px-3 py-2 text-sm bg-background border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/20 capitalize"
-            >
+            <select value={leaveType} onChange={(e) => setLeaveType(e.target.value as LeaveType)}
+              className="mt-1 w-full px-3 py-2 text-sm bg-background border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/20 capitalize">
               {leaveTypeOptions.map((t) => (
                 <option key={t} value={t} className="capitalize">{t}</option>
               ))}
@@ -128,44 +114,29 @@ function NewLeaveRequestModal({
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="text-xs font-medium text-muted-foreground">Start Date</label>
-              <input
-                type="date"
-                value={startDate}
-                onChange={(e) => setStartDate(e.target.value)}
-                className="mt-1 w-full px-3 py-2 text-sm bg-background border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/20"
-              />
+              <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)}
+                className="mt-1 w-full px-3 py-2 text-sm bg-background border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/20" />
             </div>
             <div>
               <label className="text-xs font-medium text-muted-foreground">End Date</label>
-              <input
-                type="date"
-                value={endDate}
-                onChange={(e) => setEndDate(e.target.value)}
-                className="mt-1 w-full px-3 py-2 text-sm bg-background border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/20"
-              />
+              <input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)}
+                className="mt-1 w-full px-3 py-2 text-sm bg-background border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/20" />
             </div>
           </div>
 
           <div>
             <label className="text-xs font-medium text-muted-foreground">Reason (optional)</label>
-            <textarea
-              value={reason}
-              onChange={(e) => setReason(e.target.value)}
-              rows={3}
+            <textarea value={reason} onChange={(e) => setReason(e.target.value)} rows={3}
               className="mt-1 w-full px-3 py-2 text-sm bg-background border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/20 resize-none"
-              placeholder="Ilagay ang dahilan ng leave..."
-            />
+              placeholder="Reason for leave..." />
           </div>
 
-          <div className="flex justify-end gap-2 pt-2">
+          <div className="flex flex-col sm:flex-row justify-end gap-2 pt-2">
             <button type="button" onClick={onClose} className="px-4 py-2 text-sm rounded-xl border border-border hover:bg-muted/50 transition-colors">
               Cancel
             </button>
-            <button
-              type="submit"
-              disabled={submitting}
-              className="flex items-center gap-2 px-4 py-2 text-sm bg-primary text-white rounded-xl hover:bg-primary/90 transition-colors disabled:opacity-60"
-            >
+            <button type="submit" disabled={submitting}
+              className="flex items-center justify-center gap-2 px-4 py-2 text-sm bg-primary text-white rounded-xl hover:bg-primary/90 transition-colors disabled:opacity-60">
               {submitting && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
               Submit Request
             </button>
@@ -236,49 +207,53 @@ export function LeaveManagementPage() {
   };
 
   return (
-    <div className="p-6 space-y-6">
+    <div className="p-4 sm:p-6 space-y-4 sm:space-y-6">
       <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }}
-        className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-primary via-violet-600 to-indigo-700 p-6 text-white shadow-lg">
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-2xl font-bold">Leave Management</h1>
-            <p className="text-white/70 text-sm mt-1">Review and manage employee leave requests</p>
+        className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-primary via-violet-600 to-indigo-700 p-5 sm:p-6 text-white shadow-lg">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+          <div className="min-w-0">
+            <h1 className="text-xl sm:text-2xl font-bold">Leave Management</h1>
+            <p className="text-white/70 text-xs sm:text-sm mt-1">Review and manage employee leave requests</p>
           </div>
-          <div className="flex gap-3">
+          <div className="grid grid-cols-2 sm:flex gap-2 sm:gap-3 shrink-0">
             {[
               { label: "Pending", value: summary.pending, color: "bg-amber-400/20 border-amber-400/30" },
               { label: "Approved", value: summary.approved, color: "bg-emerald-400/20 border-emerald-400/30" },
               { label: "Total Days Off", value: summary.total_days, color: "bg-white/10 border-white/20" },
             ].map((s) => (
-              <div key={s.label} className={`${s.color} rounded-xl px-4 py-2 border text-center`}>
-                <p className="text-white/60 text-xs">{s.label}</p>
-                <p className="text-white font-bold text-xl">{s.value}</p>
+              <div key={s.label} className={`${s.color} rounded-xl px-3 py-2 sm:px-4 border text-center`}>
+                <p className="text-white/60 text-[10px] sm:text-xs">{s.label}</p>
+                <p className="text-white font-bold text-lg sm:text-xl">{s.value}</p>
               </div>
             ))}
           </div>
         </div>
       </motion.div>
 
-      <div className="flex flex-col sm:flex-row gap-3">
-        <div className="relative flex-1">
+      <div className="flex flex-col gap-3">
+        <div className="relative w-full">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
           <input value={search} onChange={(e) => { setSearch(e.target.value); setPage(1); }} placeholder="Search employees..."
             className="w-full pl-9 pr-4 py-2.5 text-sm bg-card border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40" />
         </div>
-        <select value={statusFilter} onChange={(e) => { setStatusFilter(e.target.value as LeaveStatus | "all"); setPage(1); }}
-          className="px-3 py-2.5 text-sm bg-card border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary/20">
-          <option value="all">All Status</option>
-          <option value="pending">Pending</option>
-          <option value="approved">Approved</option>
-          <option value="rejected">Rejected</option>
-        </select>
-        <button className="flex items-center gap-2 px-4 py-2.5 text-sm border border-border rounded-xl bg-card hover:bg-muted/50 transition-colors"><Filter className="w-4 h-4" /> Filter</button>
-        <button
-          onClick={() => setShowNewRequestModal(true)}
-          className="flex items-center gap-2 px-4 py-2.5 text-sm bg-primary text-white rounded-xl hover:bg-primary/90 transition-colors"
-        >
-          <Plus className="w-4 h-4" /> New Request
-        </button>
+        <div className="grid grid-cols-2 sm:flex gap-2 sm:gap-3">
+          <select value={statusFilter} onChange={(e) => { setStatusFilter(e.target.value as LeaveStatus | "all"); setPage(1); }}
+            className="col-span-2 sm:col-span-1 px-3 py-2.5 text-sm bg-card border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary/20">
+            <option value="all">All Status</option>
+            <option value="pending">Pending</option>
+            <option value="approved">Approved</option>
+            <option value="rejected">Rejected</option>
+          </select>
+          <button className="flex items-center justify-center gap-2 px-3 sm:px-4 py-2.5 text-sm border border-border rounded-xl bg-card hover:bg-muted/50 transition-colors">
+            <Filter className="w-4 h-4" /> <span className="hidden sm:inline">Filter</span>
+          </button>
+          <button
+            onClick={() => setShowNewRequestModal(true)}
+            className="col-span-2 sm:col-span-1 flex items-center justify-center gap-2 px-4 py-2.5 text-sm bg-primary text-white rounded-xl hover:bg-primary/90 transition-colors"
+          >
+            <Plus className="w-4 h-4" /> New Request
+          </button>
+        </div>
       </div>
 
       {loading && (
@@ -293,54 +268,54 @@ export function LeaveManagementPage() {
       {!loading && !error && (
         <div className="bg-card rounded-2xl shadow-sm border border-border overflow-hidden">
           <div className="overflow-x-auto">
-            <table className="w-full">
+            <table className="w-full min-w-[900px]">
               <thead>
                 <tr className="border-b border-border bg-muted/30">
-                  <th className="text-left px-5 py-3.5 text-xs font-semibold text-muted-foreground uppercase tracking-wide">Employee</th>
-                  <th className="text-left px-5 py-3.5 text-xs font-semibold text-muted-foreground uppercase tracking-wide">Leave Type</th>
-                  <th className="text-left px-5 py-3.5 text-xs font-semibold text-muted-foreground uppercase tracking-wide">Duration</th>
-                  <th className="text-left px-5 py-3.5 text-xs font-semibold text-muted-foreground uppercase tracking-wide">Days</th>
-                  <th className="text-left px-5 py-3.5 text-xs font-semibold text-muted-foreground uppercase tracking-wide">Reason</th>
-                  <th className="text-left px-5 py-3.5 text-xs font-semibold text-muted-foreground uppercase tracking-wide">Applied On</th>
-                  <th className="text-left px-5 py-3.5 text-xs font-semibold text-muted-foreground uppercase tracking-wide">Status</th>
-                  <th className="px-5 py-3.5" />
+                  <th className="text-left px-4 sm:px-5 py-3.5 text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap">Employee</th>
+                  <th className="text-left px-4 sm:px-5 py-3.5 text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap">Leave Type</th>
+                  <th className="text-left px-4 sm:px-5 py-3.5 text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap">Duration</th>
+                  <th className="text-left px-4 sm:px-5 py-3.5 text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap">Days</th>
+                  <th className="text-left px-4 sm:px-5 py-3.5 text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap">Reason</th>
+                  <th className="text-left px-4 sm:px-5 py-3.5 text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap">Applied On</th>
+                  <th className="text-left px-4 sm:px-5 py-3.5 text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap">Status</th>
+                  <th className="px-4 sm:px-5 py-3.5" />
                 </tr>
               </thead>
               <tbody className="divide-y divide-border">
                 {paginated.length === 0 && (
-                  <tr><td colSpan={8} className="px-5 py-10 text-center text-sm text-muted-foreground">Walang leave request na nahanap.</td></tr>
+                  <tr><td colSpan={8} className="px-5 py-10 text-center text-sm text-muted-foreground">No leave requests found.</td></tr>
                 )}
                 {paginated.map((leave) => {
                   const cfg = statusConfig[leave.status];
                   const Icon = cfg.icon;
                   return (
                     <tr key={leave.id} className="hover:bg-muted/20 transition-colors">
-                      <td className="px-5 py-4">
+                      <td className="px-4 sm:px-5 py-4">
                         <div className="flex items-center gap-3">
-                          <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center text-primary font-semibold text-xs">
+                          <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center text-primary font-semibold text-xs shrink-0">
                             {getEmpName(leave).split(" ").map((n: string) => n[0]).join("")}
                           </div>
-                          <div>
-                            <p className="text-sm font-medium text-foreground">{getEmpName(leave)}</p>
-                            <p className="text-xs text-muted-foreground">{getDeptName(leave)}</p>
+                          <div className="min-w-0">
+                            <p className="text-sm font-medium text-foreground whitespace-nowrap">{getEmpName(leave)}</p>
+                            <p className="text-xs text-muted-foreground whitespace-nowrap">{getDeptName(leave)}</p>
                           </div>
                         </div>
                       </td>
-                      <td className="px-5 py-4">
-                        <span className={`px-2 py-0.5 rounded-full text-xs font-medium capitalize ${leaveTypeColors[leave.leave_type]}`}>
+                      <td className="px-4 sm:px-5 py-4">
+                        <span className={`px-2 py-0.5 rounded-full text-xs font-medium capitalize whitespace-nowrap ${leaveTypeColors[leave.leave_type]}`}>
                           {leave.leave_type.replace("_", " ")}
                         </span>
                       </td>
-                      <td className="px-5 py-4 text-sm text-muted-foreground">{leave.start_date} → {leave.end_date}</td>
-                      <td className="px-5 py-4 text-sm font-semibold text-foreground">{leave.days_count}d</td>
-                      <td className="px-5 py-4 text-sm text-muted-foreground max-w-[160px] truncate">{leave.reason}</td>
-                      <td className="px-5 py-4 text-sm text-muted-foreground">{leave.created_at?.slice(0, 10)}</td>
-                      <td className="px-5 py-4">
-                        <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium border ${cfg.className}`}>
+                      <td className="px-4 sm:px-5 py-4 text-sm text-muted-foreground whitespace-nowrap">{leave.start_date} → {leave.end_date}</td>
+                      <td className="px-4 sm:px-5 py-4 text-sm font-semibold text-foreground whitespace-nowrap">{leave.days_count}d</td>
+                      <td className="px-4 sm:px-5 py-4 text-sm text-muted-foreground max-w-[160px] truncate">{leave.reason}</td>
+                      <td className="px-4 sm:px-5 py-4 text-sm text-muted-foreground whitespace-nowrap">{leave.created_at?.slice(0, 10)}</td>
+                      <td className="px-4 sm:px-5 py-4">
+                        <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium border whitespace-nowrap ${cfg.className}`}>
                           <Icon className="w-3 h-3" /> {cfg.label}
                         </span>
                       </td>
-                      <td className="px-5 py-4">
+                      <td className="px-4 sm:px-5 py-4">
                         {leave.status === "pending" && (
                           <div className="flex items-center gap-1">
                             <button onClick={() => updateStatus(leave.id, "approved")} className="w-6 h-6 rounded-full bg-emerald-100 flex items-center justify-center hover:bg-emerald-200 transition-colors">
@@ -358,13 +333,13 @@ export function LeaveManagementPage() {
               </tbody>
             </table>
           </div>
-          <div className="flex items-center justify-between px-5 py-3.5 border-t border-border">
+          <div className="flex flex-col sm:flex-row items-center justify-between gap-3 px-4 sm:px-5 py-3.5 border-t border-border">
             <p className="text-xs text-muted-foreground">
               Showing {filtered.length === 0 ? 0 : (page - 1) * perPage + 1}–{Math.min(page * perPage, filtered.length)} of {filtered.length} requests
             </p>
-            <div className="flex items-center gap-1">
+            <div className="flex items-center gap-1 flex-wrap justify-center">
               <button disabled={page <= 1} onClick={() => setPage((p) => p - 1)} className="w-8 h-8 rounded-lg flex items-center justify-center hover:bg-muted disabled:opacity-40 transition-colors"><ChevronLeft className="w-4 h-4" /></button>
-              {Array.from({ length: totalPages }, (_, i) => i + 1).map((p) => (
+              {Array.from({ length: totalPages }, (_, i) => i + 1).slice(0, 5).map((p) => (
                 <button key={p} onClick={() => setPage(p)} className={`w-8 h-8 rounded-lg text-xs font-medium transition-colors ${p === page ? "bg-primary text-white" : "hover:bg-muted text-muted-foreground"}`}>{p}</button>
               ))}
               <button disabled={page >= totalPages} onClick={() => setPage((p) => p + 1)} className="w-8 h-8 rounded-lg flex items-center justify-center hover:bg-muted disabled:opacity-40 transition-colors"><ChevronRight className="w-4 h-4" /></button>

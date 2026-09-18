@@ -8,6 +8,7 @@ dotenv.config();
 console.log("🔧 Nag-start ang server.js, papasok na sa imports...");
 
 import authRoutes from "./routes/auth.js";
+import mfaRoutes from "./routes/mfa.js"; // ✅ BAGO
 import employeesRoutes from "./routes/employees.js";
 import departmentsRoutes from "./routes/departments.js";
 import attendanceRoutes from "./routes/attendance.js";
@@ -21,12 +22,11 @@ import notificationsRoutes from "./routes/notifications.js";
 import settingsRoutes from "./routes/settings.js";
 import timesheetsRoutes from "./routes/timesheets.js";
 import reportsRoutes from "./routes/reports.js";
-import deviceAttendanceRoutes from "./routes/deviceattendance.js"; // BAGO
-import partnerAttendanceRoutes from "./routes/partnerAttendance.js"; // BAGO - para kay Kenneth/HR1
+import deviceAttendanceRoutes from "./routes/deviceattendance.js";
+import partnerAttendanceRoutes from "./routes/partnerAttendance.js";
 
 console.log("✅ Lahat ng route files matagumpay na na-import.");
 
-// Kailangan ito dahil ESM module ("type": "module") - walang built-in __dirname
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
@@ -34,17 +34,13 @@ const app = express();
 
 app.use(cors({ origin: process.env.CORS_ORIGIN ?? "http://localhost:5173" }));
 
-// MAHALAGA: i-mount ang ADMS/iClock listener BAGO ang express.json() global
-// middleware, dahil may sarili itong express.text() body parser na
-// naka-scope lang sa router na ito. Kung mauuna ang global express.json(),
-// walang epekto naman dahil hindi ito tumutugma sa content-type na
-// ipinapadala ng fingerprint device — pero mas malinaw at mas ligtas kung
-// bago natin ilagay ito, iwas future conflicts.
+// MAHALAGA: i-mount ang ADMS/iClock listener BAGO ang express.json() global middleware.
 app.use("/iclock", deviceAttendanceRoutes);
 
 app.use(express.json());
 
 app.use("/api/auth", authRoutes);
+app.use("/api/mfa", mfaRoutes); // ✅ BAGO
 app.use("/api/employees", employeesRoutes);
 app.use("/api/departments", departmentsRoutes);
 app.use("/api/attendance", attendanceRoutes);
@@ -58,28 +54,24 @@ app.use("/api/notifications", notificationsRoutes);
 app.use("/api/settings", settingsRoutes);
 app.use("/api/timesheets", timesheetsRoutes);
 app.use("/api/reports", reportsRoutes);
-app.use("/api/partner/attendance", partnerAttendanceRoutes); // BAGO - endpoint para kay Kenneth
+app.use("/api/partner/attendance", partnerAttendanceRoutes);
 
 app.get("/api/health", (req, res) => res.json({ ok: true }));
 
 // ============================================================
 // I-serve ang built frontend (Vite output)
 // ============================================================
-// Ang "dist" folder ay nasa ROOT ng repo (my-workforce-app/dist),
-// habang ang server.js na ito ay nasa my-workforce-app/backend/src/
-// kaya kailangan umakyat ng dalawang level (../../) para maabot ito.
 const frontendPath = path.join(__dirname, "../../dist");
 
 app.use(express.static(frontendPath));
 
-// SPA fallback — kahit anong route na hindi /api o /iclock, ibalik ang
-// index.html para si React Router na ang bahalang mag-handle ng routing
+// SPA fallback — kahit anong route na hindi /api o /iclock, ibalik ang index.html
 app.get(/^(?!\/api|\/iclock).*/, (req, res) => {
   res.sendFile(path.join(frontendPath, "index.html"));
 });
 // ============================================================
 
-// Error handler — dapat laging PINAKAHULI ito sa lahat ng routes/middleware
+// Error handler — dapat laging PINAKAHULI
 app.use((err, req, res, next) => {
   console.error("❌ Express error handler:", err);
   res.status(500).json({ error: err.message ?? "Internal server error" });
@@ -92,9 +84,6 @@ process.on("uncaughtException", (err) => {
   console.error("⚠️  Uncaught exception (hindi pinatay ang server):", err);
 });
 
-// Ibinaba mula 4000 papunta sa 3000 para tumugma sa Port na naka-configure
-// sa HostForge (Build Configuration > Port). Gagamitin pa rin ang PORT env
-// var kung ito ay naka-set ng platform.
 const PORT = process.env.PORT ?? 3000;
 
 app.listen(PORT, "0.0.0.0", () => {

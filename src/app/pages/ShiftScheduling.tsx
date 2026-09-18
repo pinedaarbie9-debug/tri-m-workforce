@@ -5,23 +5,10 @@ import { format, startOfWeek, addDays, isToday } from "date-fns";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../components/ui/dialog";
 import { api } from "../../lib/api";
 
-interface ShiftType {
-  id: string;
-  type: string;
-  name: string;
-  color: string;
-}
-
+interface ShiftType { id: string; type: string; name: string; color: string; }
 interface Assignment {
-  id: string;
-  date: string;
-  employee_id: string;
-  employee_name: string;
-  department_name: string | null;
-  shift_id: string;
-  shift_name: string;
-  shift_type: string;
-  shift_color: string;
+  id: string; date: string; employee_id: string; employee_name: string; department_name: string | null;
+  shift_id: string; shift_name: string; shift_type: string; shift_color: string;
 }
 
 const iconFor = (type: string) => (type === "day" ? Sun : type === "evening" ? Sunset : Moon);
@@ -85,7 +72,7 @@ export function ShiftSchedulingPage() {
     e.preventDefault();
     setFormError(null);
     if (!shiftForm.name.trim()) {
-      setFormError("Kailangan ng pangalan ng shift.");
+      setFormError("Shift name is required.");
       return;
     }
     setSavingShift(true);
@@ -95,7 +82,7 @@ export function ShiftSchedulingPage() {
       setShiftForm(emptyShiftForm);
       fetchAll();
     } catch (err: any) {
-      setFormError(err.message ?? "Nabigo ang paggawa ng shift.");
+      setFormError(err.message ?? "Failed to create shift.");
     } finally {
       setSavingShift(false);
     }
@@ -105,7 +92,7 @@ export function ShiftSchedulingPage() {
     e.preventDefault();
     setFormError(null);
     if (!assignForm.employee_id || !assignForm.shift_id || !assignDate) {
-      setFormError("Piliin ang empleyado at shift.");
+      setFormError("Please select an employee and shift.");
       return;
     }
     setSavingAssign(true);
@@ -115,7 +102,7 @@ export function ShiftSchedulingPage() {
       setAssignForm(emptyAssignForm);
       fetchAll();
     } catch (err: any) {
-      setFormError(err.message ?? "Nabigo ang pag-assign ng shift.");
+      setFormError(err.message ?? "Failed to assign shift.");
     } finally {
       setSavingAssign(false);
     }
@@ -127,20 +114,19 @@ export function ShiftSchedulingPage() {
   }));
 
   return (
-    <div className="p-6 space-y-6">
-      <motion.div
-        initial={{ opacity: 0, y: -10 }}
-        animate={{ opacity: 1, y: 0 }}
-        className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-primary via-violet-600 to-indigo-700 p-6 text-white shadow-lg"
-      >
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-2xl font-bold flex items-center gap-2"><CalendarDays className="w-7 h-7" /> Shift Scheduling</h1>
-            <p className="text-white/70 text-sm mt-1">Manage and assign employee shifts for the week</p>
+    <div className="p-4 sm:p-6 space-y-4 sm:space-y-6">
+      <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }}
+        className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-primary via-violet-600 to-indigo-700 p-5 sm:p-6 text-white shadow-lg">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+          <div className="min-w-0">
+            <h1 className="text-xl sm:text-2xl font-bold flex items-center gap-2">
+              <CalendarDays className="w-6 h-6 sm:w-7 sm:h-7" /> Shift Scheduling
+            </h1>
+            <p className="text-white/70 text-xs sm:text-sm mt-1">Manage and assign employee shifts for the week</p>
           </div>
           <button
             onClick={() => { setShiftForm(emptyShiftForm); setFormError(null); setShowCreateShiftModal(true); }}
-            className="flex items-center gap-2 px-4 py-2 bg-white/15 backdrop-blur-sm text-white rounded-xl border border-white/30 hover:bg-white/25 transition-colors text-sm font-medium"
+            className="flex items-center justify-center gap-2 px-4 py-2 bg-white/15 backdrop-blur-sm text-white rounded-xl border border-white/30 hover:bg-white/25 transition-colors text-sm font-medium shrink-0 self-start"
           >
             <Plus className="w-4 h-4" /> Create Shift
           </button>
@@ -149,11 +135,11 @@ export function ShiftSchedulingPage() {
 
       {shiftTypes.length === 0 && !loading && (
         <div className="p-4 bg-amber-50 border border-amber-200 rounded-xl text-sm text-amber-700">
-          Wala pang shift type. I-click ang "Create Shift" para makagawa ng una (hal. Day, Evening, Night).
+          No shift types yet. Click "Create Shift" to add one (e.g. Day, Evening, Night).
         </div>
       )}
 
-      <div className="flex items-center gap-4 flex-wrap">
+      <div className="flex items-center gap-2 sm:gap-4 flex-wrap">
         {shiftTypes.map((st) => {
           const Icon = iconFor(st.type);
           return (
@@ -170,8 +156,8 @@ export function ShiftSchedulingPage() {
           <button onClick={() => setWeekStart((d) => addDays(d, -7))} className="w-8 h-8 rounded-lg flex items-center justify-center hover:bg-muted transition-colors">
             <ChevronLeft className="w-4 h-4" />
           </button>
-          <div className="text-center">
-            <p className="font-semibold text-foreground">
+          <div className="text-center min-w-0">
+            <p className="font-semibold text-foreground text-xs sm:text-sm truncate">
               {format(weekStart, "MMM d")} – {format(addDays(weekStart, 6), "MMM d, yyyy")}
             </p>
             <p className="text-xs text-muted-foreground">Weekly Schedule</p>
@@ -240,14 +226,13 @@ export function ShiftSchedulingPage() {
           const Icon = iconFor(st.type);
           return (
             <motion.div key={st.id} initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.05 }}
-              className="bg-card rounded-2xl p-4 shadow-sm border border-border"
-            >
+              className="bg-card rounded-2xl p-4 shadow-sm border border-border">
               <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-xl flex items-center justify-center" style={{ backgroundColor: `${st.color}20` }}>
+                <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0" style={{ backgroundColor: `${st.color}20` }}>
                   <Icon className="w-5 h-5" style={{ color: st.color }} />
                 </div>
-                <div>
-                  <p className="text-xs text-muted-foreground">{st.name}</p>
+                <div className="min-w-0">
+                  <p className="text-xs text-muted-foreground truncate">{st.name}</p>
                   <p className="font-bold text-foreground text-lg">{st.count}</p>
                 </div>
               </div>
@@ -257,9 +242,8 @@ export function ShiftSchedulingPage() {
         })}
       </div>
 
-      {/* Create Shift Modal */}
       <Dialog open={showCreateShiftModal} onOpenChange={setShowCreateShiftModal}>
-        <DialogContent className="sm:max-w-md">
+        <DialogContent className="sm:max-w-md max-h-[85vh] overflow-y-auto">
           <DialogHeader><DialogTitle>Create Shift</DialogTitle></DialogHeader>
           <form onSubmit={handleCreateShift} className="space-y-4">
             {formError && <div className="p-2.5 bg-destructive/10 border border-destructive/20 rounded-lg text-sm text-destructive">{formError}</div>}
@@ -278,7 +262,7 @@ export function ShiftSchedulingPage() {
                 <option value="rotating">Rotating</option>
               </select>
             </div>
-            <div className="flex justify-end gap-2 pt-2">
+            <div className="flex flex-col sm:flex-row justify-end gap-2 pt-2">
               <button type="button" onClick={() => setShowCreateShiftModal(false)} className="px-4 py-2 text-sm rounded-lg border border-border hover:bg-muted/50 transition-colors">Cancel</button>
               <button type="submit" disabled={savingShift} className="px-4 py-2 text-sm bg-primary text-white rounded-lg hover:bg-primary/90 disabled:opacity-60 transition-colors">
                 {savingShift ? "Saving..." : "Create Shift"}
@@ -288,9 +272,8 @@ export function ShiftSchedulingPage() {
         </DialogContent>
       </Dialog>
 
-      {/* Assign Employee Modal */}
       <Dialog open={Boolean(assignDate)} onOpenChange={() => setAssignDate(null)}>
-        <DialogContent className="sm:max-w-md">
+        <DialogContent className="sm:max-w-md max-h-[85vh] overflow-y-auto">
           <DialogHeader><DialogTitle>Assign Shift — {assignDate}</DialogTitle></DialogHeader>
           <form onSubmit={handleAssign} className="space-y-4">
             {formError && <div className="p-2.5 bg-destructive/10 border border-destructive/20 rounded-lg text-sm text-destructive">{formError}</div>}
@@ -298,7 +281,7 @@ export function ShiftSchedulingPage() {
               <label className="text-sm font-medium text-foreground">Employee</label>
               <select value={assignForm.employee_id} onChange={(e) => setAssignForm({ ...assignForm, employee_id: e.target.value })}
                 className="w-full px-3.5 py-2.5 rounded-lg border border-border bg-input-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/20">
-                <option value="">Piliin ang empleyado</option>
+                <option value="">Select employee</option>
                 {employees.map((emp) => (
                   <option key={emp.id} value={emp.id}>{emp.full_name}</option>
                 ))}
@@ -308,13 +291,13 @@ export function ShiftSchedulingPage() {
               <label className="text-sm font-medium text-foreground">Shift</label>
               <select value={assignForm.shift_id} onChange={(e) => setAssignForm({ ...assignForm, shift_id: e.target.value })}
                 className="w-full px-3.5 py-2.5 rounded-lg border border-border bg-input-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/20">
-                <option value="">Piliin ang shift</option>
+                <option value="">Select shift</option>
                 {shiftTypes.map((st) => (
                   <option key={st.id} value={st.id}>{st.name}</option>
                 ))}
               </select>
             </div>
-            <div className="flex justify-end gap-2 pt-2">
+            <div className="flex flex-col sm:flex-row justify-end gap-2 pt-2">
               <button type="button" onClick={() => setAssignDate(null)} className="px-4 py-2 text-sm rounded-lg border border-border hover:bg-muted/50 transition-colors">Cancel</button>
               <button type="submit" disabled={savingAssign} className="px-4 py-2 text-sm bg-primary text-white rounded-lg hover:bg-primary/90 disabled:opacity-60 transition-colors">
                 {savingAssign ? "Saving..." : "Assign"}

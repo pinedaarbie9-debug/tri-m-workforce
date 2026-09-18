@@ -3,7 +3,7 @@ import { BarChart3, TrendingUp, Users, Clock } from "lucide-react";
 import { motion } from "motion/react";
 import {
   BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
-  PieChart, Pie, Cell, Legend, AreaChart, Area, RadialBarChart, RadialBar,
+  PieChart, Pie, Cell, AreaChart, Area,
 } from "recharts";
 
 const headcountByDept = [
@@ -16,12 +16,8 @@ const headcountByDept = [
 ];
 
 const attendanceByMonth = [
-  { month: "Jan", rate: 92.1 },
-  { month: "Feb", rate: 88.5 },
-  { month: "Mar", rate: 95.3 },
-  { month: "Apr", rate: 91.8 },
-  { month: "May", rate: 97.2 },
-  { month: "Jun", rate: 94.6 },
+  { month: "Jan", rate: 92.1 }, { month: "Feb", rate: 88.5 }, { month: "Mar", rate: 95.3 },
+  { month: "Apr", rate: 91.8 }, { month: "May", rate: 97.2 }, { month: "Jun", rate: 94.6 },
   { month: "Jul", rate: 96.4 },
 ];
 
@@ -34,38 +30,28 @@ const leaveDistribution = [
 ];
 
 const overtimeTrend = [
-  { week: "W1", hours: 48 },
-  { week: "W2", hours: 62 },
-  { week: "W3", hours: 35 },
-  { week: "W4", hours: 78 },
-  { week: "W5", hours: 54 },
-  { week: "W6", hours: 41 },
-  { week: "W7", hours: 67 },
-  { week: "W8", hours: 52 },
-];
-
-const retentionData = [
-  { name: "Retained", value: 94, fill: "#7c3aed" },
-  { name: "Turnover", value: 6, fill: "#ef4444" },
+  { week: "W1", hours: 48 }, { week: "W2", hours: 62 }, { week: "W3", hours: 35 }, { week: "W4", hours: 78 },
+  { week: "W5", hours: 54 }, { week: "W6", hours: 41 }, { week: "W7", hours: 67 }, { week: "W8", hours: 52 },
 ];
 
 export function AnalyticsPage() {
   const [period, setPeriod] = useState<"quarter" | "half" | "year">("quarter");
 
   return (
-    <div className="p-6 space-y-6">
-      {/* Banner */}
+    <div className="p-4 sm:p-6 space-y-4 sm:space-y-6">
       <motion.div
         initial={{ opacity: 0, y: -10 }}
         animate={{ opacity: 1, y: 0 }}
-        className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-primary via-violet-600 to-indigo-700 p-6 text-white shadow-lg"
+        className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-primary via-violet-600 to-indigo-700 p-5 sm:p-6 text-white shadow-lg"
       >
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-2xl font-bold flex items-center gap-2"><BarChart3 className="w-7 h-7" /> Workforce Analytics</h1>
-            <p className="text-white/70 text-sm mt-1">Data-driven insights for smarter workforce decisions</p>
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+          <div className="min-w-0">
+            <h1 className="text-xl sm:text-2xl font-bold flex items-center gap-2">
+              <BarChart3 className="w-6 h-6 sm:w-7 sm:h-7" /> Workforce Analytics
+            </h1>
+            <p className="text-white/70 text-xs sm:text-sm mt-1">Data-driven insights for smarter workforce decisions</p>
           </div>
-          <div className="flex items-center gap-2 bg-white/10 rounded-xl p-1 border border-white/20">
+          <div className="flex items-center gap-1 bg-white/10 rounded-xl p-1 border border-white/20 self-start shrink-0">
             {(["quarter", "half", "year"] as const).map((p) => (
               <button
                 key={p}
@@ -79,8 +65,7 @@ export function AnalyticsPage() {
         </div>
       </motion.div>
 
-      {/* KPI Cards */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
         {[
           { label: "Avg Tenure", value: "3.2 yrs", trend: "+0.4", icon: Users, color: "#7c3aed" },
           { label: "Turnover Rate", value: "6%", trend: "-1.2%", icon: TrendingUp, color: "#10b981" },
@@ -88,15 +73,14 @@ export function AnalyticsPage() {
           { label: "Attendance Rate", value: "96.4%", trend: "+1.8%", icon: BarChart3, color: "#f59e0b" },
         ].map((kpi, i) => (
           <motion.div key={kpi.label} initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.05 }}
-            className="bg-card rounded-2xl p-4 shadow-sm border border-border"
-          >
-            <div className="flex items-start justify-between">
-              <div>
-                <p className="text-xs font-medium text-muted-foreground uppercase">{kpi.label}</p>
-                <p className="text-2xl font-bold mt-1 text-foreground">{kpi.value}</p>
-                <p className="text-xs text-emerald-600 font-medium mt-1">{kpi.trend} vs last period</p>
+            className="bg-card rounded-2xl p-4 shadow-sm border border-border">
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <p className="text-xs font-medium text-muted-foreground uppercase truncate">{kpi.label}</p>
+                <p className="text-xl sm:text-2xl font-bold mt-1 text-foreground truncate">{kpi.value}</p>
+                <p className="text-xs text-emerald-600 font-medium mt-1 truncate">{kpi.trend} vs last</p>
               </div>
-              <div className="w-10 h-10 rounded-xl flex items-center justify-center" style={{ backgroundColor: `${kpi.color}15` }}>
+              <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0" style={{ backgroundColor: `${kpi.color}15` }}>
                 <kpi.icon className="w-5 h-5" style={{ color: kpi.color }} />
               </div>
             </div>
@@ -104,12 +88,9 @@ export function AnalyticsPage() {
         ))}
       </div>
 
-      {/* Charts Row 1 */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        {/* Headcount by Department */}
         <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 }}
-          className="bg-card rounded-2xl p-5 shadow-sm border border-border"
-        >
+          className="bg-card rounded-2xl p-4 sm:p-5 shadow-sm border border-border">
           <h3 className="font-semibold text-foreground mb-1">Headcount by Department</h3>
           <p className="text-xs text-muted-foreground mb-4">Current employee distribution</p>
           <ResponsiveContainer width="100%" height={220}>
@@ -127,10 +108,8 @@ export function AnalyticsPage() {
           </ResponsiveContainer>
         </motion.div>
 
-        {/* Attendance Rate Trend */}
         <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.25 }}
-          className="bg-card rounded-2xl p-5 shadow-sm border border-border"
-        >
+          className="bg-card rounded-2xl p-4 sm:p-5 shadow-sm border border-border">
           <h3 className="font-semibold text-foreground mb-1">Monthly Attendance Rate</h3>
           <p className="text-xs text-muted-foreground mb-4">Percentage of employees present</p>
           <ResponsiveContainer width="100%" height={220}>
@@ -151,12 +130,9 @@ export function AnalyticsPage() {
         </motion.div>
       </div>
 
-      {/* Charts Row 2 */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        {/* Leave Distribution */}
         <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.3 }}
-          className="bg-card rounded-2xl p-5 shadow-sm border border-border"
-        >
+          className="bg-card rounded-2xl p-4 sm:p-5 shadow-sm border border-border">
           <h3 className="font-semibold text-foreground mb-1">Leave Distribution</h3>
           <p className="text-xs text-muted-foreground mb-4">By leave type this year</p>
           <ResponsiveContainer width="100%" height={180}>
@@ -172,20 +148,18 @@ export function AnalyticsPage() {
           <div className="space-y-1.5 mt-2">
             {leaveDistribution.map((item) => (
               <div key={item.name} className="flex items-center justify-between text-xs">
-                <div className="flex items-center gap-2">
-                  <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: item.color }} />
-                  <span className="text-muted-foreground">{item.name}</span>
+                <div className="flex items-center gap-2 min-w-0">
+                  <div className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: item.color }} />
+                  <span className="text-muted-foreground truncate">{item.name}</span>
                 </div>
-                <span className="font-semibold text-foreground">{item.value}</span>
+                <span className="font-semibold text-foreground shrink-0">{item.value}</span>
               </div>
             ))}
           </div>
         </motion.div>
 
-        {/* Overtime Trend */}
         <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.35 }}
-          className="lg:col-span-2 bg-card rounded-2xl p-5 shadow-sm border border-border"
-        >
+          className="lg:col-span-2 bg-card rounded-2xl p-4 sm:p-5 shadow-sm border border-border">
           <h3 className="font-semibold text-foreground mb-1">Weekly Overtime Hours</h3>
           <p className="text-xs text-muted-foreground mb-4">Total overtime across all departments</p>
           <ResponsiveContainer width="100%" height={220}>

@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 import { Settings, Bell, Shield, Clock, CalendarDays, Building2, Save, ChevronRight, Loader2 } from "lucide-react";
 import { motion } from "motion/react";
 import { api } from "../../lib/api";
+import { MfaSettings } from "../components/MfaSettings";
 
 interface SettingSection {
   id: string;
@@ -70,7 +71,7 @@ export function SettingsPage() {
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
     } catch (err: any) {
-      alert(err.message ?? "Nabigo ang pag-save ng settings.");
+      alert(err.message ?? "Failed to save settings.");
     } finally {
       setSaving(false);
     }
@@ -86,16 +87,19 @@ export function SettingsPage() {
     return values[key];
   }
 
+  const securityItems = settings.filter((s) => s.category === "security");
+
   return (
-    <div className="p-6 space-y-6">
-      {/* Banner */}
+    <div className="p-4 sm:p-6 space-y-4 sm:space-y-6">
       <motion.div
         initial={{ opacity: 0, y: -10 }}
         animate={{ opacity: 1, y: 0 }}
-        className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-primary via-violet-600 to-indigo-700 p-6 text-white shadow-lg"
+        className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-primary via-violet-600 to-indigo-700 p-5 sm:p-6 text-white shadow-lg"
       >
-        <h1 className="text-2xl font-bold flex items-center gap-2"><Settings className="w-7 h-7" /> System Settings</h1>
-        <p className="text-white/70 text-sm mt-1">Configure your Workforce Management System preferences</p>
+        <h1 className="text-xl sm:text-2xl font-bold flex items-center gap-2">
+          <Settings className="w-6 h-6 sm:w-7 sm:h-7" /> System Settings
+        </h1>
+        <p className="text-white/70 text-xs sm:text-sm mt-1">Configure your Workforce Management System preferences</p>
       </motion.div>
 
       {loading && (
@@ -104,18 +108,23 @@ export function SettingsPage() {
         </div>
       )}
       {!loading && error && (
-        <div className="p-4 bg-red-50 border border-red-200 rounded-xl text-sm text-red-700">Failed to load settings: {error}</div>
+        <div className="p-4 bg-red-50 border border-red-200 rounded-xl text-sm text-red-700">
+          Failed to load settings: {error}
+        </div>
       )}
 
       {!loading && !error && (
-        <div className="flex gap-6">
-          {/* Sidebar Nav */}
-          <div className="w-56 shrink-0 space-y-1">
+        <div className="flex flex-col lg:flex-row gap-4 lg:gap-6">
+          <nav
+            className="lg:w-56 shrink-0 flex lg:flex-col gap-1 overflow-x-auto lg:overflow-x-visible pb-2 lg:pb-0"
+            aria-label="Settings sections"
+          >
             {SECTIONS.map((sec) => (
               <button
                 key={sec.id}
                 onClick={() => setActiveSection(sec.id)}
-                className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-sm font-medium transition-all ${activeSection === sec.id ? "bg-primary text-white" : "text-foreground hover:bg-muted"}`}
+                aria-current={activeSection === sec.id ? "page" : undefined}
+                className={`shrink-0 lg:w-full flex items-center justify-between gap-2 px-3 py-2.5 rounded-xl text-sm font-medium transition-all focus:outline-none focus:ring-2 focus:ring-primary/40 ${activeSection === sec.id ? "bg-primary text-white" : "text-foreground hover:bg-muted"}`}
               >
                 <div className="flex items-center gap-2.5">
                   <div className={`w-6 h-6 rounded-lg flex items-center justify-center ${activeSection === sec.id ? "bg-white/20" : sec.color}`}>
@@ -123,18 +132,24 @@ export function SettingsPage() {
                   </div>
                   {sec.label}
                 </div>
-                <ChevronRight className="w-3.5 h-3.5 opacity-50" />
+                <ChevronRight className="w-3.5 h-3.5 opacity-50 hidden lg:block" />
               </button>
             ))}
-          </div>
+          </nav>
 
-          {/* Settings Panel */}
-          <div className="flex-1 bg-card rounded-2xl shadow-sm border border-border p-6 space-y-6">
+          <div className="flex-1 bg-card rounded-2xl shadow-sm border border-border p-4 sm:p-6 space-y-6 min-w-0">
             {SECTIONS.find((s) => s.id === activeSection) && (
               <div>
-                <h2 className="text-lg font-semibold text-foreground mb-4">
+                <h2 className="text-base sm:text-lg font-semibold text-foreground mb-4">
                   {SECTIONS.find((s) => s.id === activeSection)!.label}
                 </h2>
+
+                {activeSection === "security" && (
+                  <div className="mb-6 pb-6 border-b border-border">
+                    <MfaSettings />
+                  </div>
+                )}
+
                 {settings
                   .filter((s) => s.category === activeSection)
                   .map((s) => {
@@ -173,28 +188,31 @@ export function SettingsPage() {
                       </SettingRow>
                     );
                   })}
-                {settings.filter((s) => s.category === activeSection).length === 0 && (
-                  <p className="text-sm text-muted-foreground py-6 text-center">Walang settings sa section na ito.</p>
+
+                {settings.filter((s) => s.category === activeSection).length === 0 && activeSection !== "security" && (
+                  <p className="text-sm text-muted-foreground py-6 text-center">No settings in this section.</p>
                 )}
               </div>
             )}
 
-            <div className="pt-4 border-t border-border flex items-center gap-3">
-              <button
-                onClick={handleSave}
-                disabled={saving}
-                className="flex items-center gap-2 px-5 py-2.5 bg-primary text-white rounded-xl hover:bg-primary/90 disabled:opacity-60 transition-colors text-sm font-medium"
-              >
-                <Save className="w-4 h-4" />
-                {saving ? "Saving..." : saved ? "Saved!" : "Save Changes"}
-              </button>
-              <button
-                onClick={handleCancel}
-                className="px-5 py-2.5 border border-border rounded-xl text-sm font-medium text-muted-foreground hover:bg-muted/50 transition-colors"
-              >
-                Cancel
-              </button>
-            </div>
+            {securityItems.length > 0 && (
+              <div className="pt-4 border-t border-border flex flex-col sm:flex-row items-stretch sm:items-center gap-2 sm:gap-3">
+                <button
+                  onClick={handleSave}
+                  disabled={saving}
+                  className="flex items-center justify-center gap-2 px-5 py-2.5 bg-primary text-white rounded-xl hover:bg-primary/90 disabled:opacity-60 transition-colors text-sm font-medium"
+                >
+                  <Save className="w-4 h-4" />
+                  {saving ? "Saving..." : saved ? "Saved!" : "Save Changes"}
+                </button>
+                <button
+                  onClick={handleCancel}
+                  className="px-5 py-2.5 border border-border rounded-xl text-sm font-medium text-muted-foreground hover:bg-muted/50 transition-colors"
+                >
+                  Cancel
+                </button>
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -204,12 +222,12 @@ export function SettingsPage() {
 
 function SettingRow({ label, description, children }: { label: string; description?: string; children: React.ReactNode }) {
   return (
-    <div className="flex items-start justify-between gap-4 py-4 border-b border-border last:border-0">
-      <div className="flex-1">
+    <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3 py-4 border-b border-border last:border-0">
+      <div className="flex-1 min-w-0">
         <p className="text-sm font-medium text-foreground">{label}</p>
         {description && <p className="text-xs text-muted-foreground mt-0.5">{description}</p>}
       </div>
-      <div className="shrink-0">{children}</div>
+      <div className="shrink-0 w-full sm:w-auto">{children}</div>
     </div>
   );
 }
@@ -234,7 +252,7 @@ function TextInput({ value, onChange }: { value: string; onChange: (v: string) =
     <input
       value={value}
       onChange={(e) => onChange(e.target.value)}
-      className="w-52 px-3 py-1.5 text-sm border border-border rounded-lg bg-input-background focus:outline-none focus:ring-2 focus:ring-primary/20"
+      className="w-full sm:w-52 px-3 py-1.5 text-sm border border-border rounded-lg bg-input-background focus:outline-none focus:ring-2 focus:ring-primary/20"
     />
   );
 }
@@ -244,7 +262,7 @@ function SelectInput({ options, value, onChange }: { options: string[]; value: s
     <select
       value={value}
       onChange={(e) => onChange(e.target.value)}
-      className="w-44 px-3 py-1.5 text-sm border border-border rounded-lg bg-input-background focus:outline-none focus:ring-2 focus:ring-primary/20"
+      className="w-full sm:w-44 px-3 py-1.5 text-sm border border-border rounded-lg bg-input-background focus:outline-none focus:ring-2 focus:ring-primary/20"
     >
       {options.map((o) => <option key={o} value={o}>{o}</option>)}
     </select>
