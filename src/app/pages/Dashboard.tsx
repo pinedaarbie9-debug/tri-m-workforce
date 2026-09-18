@@ -105,7 +105,7 @@ export function DashboardPage() {
           <div>
             <p className="text-white/70 text-sm">{format(now, "EEEE, MMMM d, yyyy")}</p>
             <h1 className="text-2xl font-bold mt-1">{greeting}, {user?.full_name?.split(" ")[0] ?? "there"} 👋</h1>
-            <p className="text-white/70 text-sm mt-1">Automated Report Generation · Real-Time HR Monitoring · Support Evaluation · Cloud-Based</p>
+            <p className="text-white/70 text-sm mt-1">Automated Report Generation · Real-Time HR Monitoring · Support Evaluation · Web-Based</p>
           </div>
           <div className="flex items-center gap-3">
             <div className="text-right bg-white/10 backdrop-blur-sm rounded-xl px-4 py-3 border border-white/20">
