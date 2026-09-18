@@ -8,7 +8,7 @@ dotenv.config();
 console.log("🔧 Nag-start ang server.js, papasok na sa imports...");
 
 import authRoutes from "./routes/auth.js";
-import mfaRoutes from "./routes/mfa.js"; // ✅ BAGO
+import mfaRoutes from "./routes/mfa.js";
 import employeesRoutes from "./routes/employees.js";
 import departmentsRoutes from "./routes/departments.js";
 import attendanceRoutes from "./routes/attendance.js";
@@ -32,15 +32,44 @@ const __dirname = path.dirname(__filename);
 
 const app = express();
 
-app.use(cors({ origin: process.env.CORS_ORIGIN ?? "http://localhost:5173" }));
+// ============================================================
+// CORS — tumatanggap ng multiple origins (comma-separated)
+// ============================================================
+const rawCors = process.env.CORS_ORIGIN ?? "http://localhost:5173";
+const allowedOrigins = rawCors
+  .split(",")
+  .map((o) => o.trim())
+  .filter(Boolean);
 
-// MAHALAGA: i-mount ang ADMS/iClock listener BAGO ang express.json() global middleware.
+console.log("🌐 Allowed CORS origins:", allowedOrigins);
+
+app.use(
+  cors({
+    origin: (origin, callback) => {
+      // Payagan ang requests na walang origin (hal. mobile apps, curl)
+      if (!origin) return callback(null, true);
+      if (allowedOrigins.includes(origin) || allowedOrigins.includes("*")) {
+        return callback(null, true);
+      }
+      console.warn(`⚠️  CORS blocked request from: ${origin}`);
+      return callback(new Error(`CORS: origin ${origin} not allowed`));
+    },
+    credentials: true,
+  })
+);
+
+// ============================================================
+// ADMS/iClock listener — BAGO ang express.json()
+// ============================================================
 app.use("/iclock", deviceAttendanceRoutes);
 
-app.use(express.json());
+app.use(express.json({ limit: "2mb" }));
 
+// ============================================================
+// API routes
+// ============================================================
 app.use("/api/auth", authRoutes);
-app.use("/api/mfa", mfaRoutes); // ✅ BAGO
+app.use("/api/mfa", mfaRoutes);
 app.use("/api/employees", employeesRoutes);
 app.use("/api/departments", departmentsRoutes);
 app.use("/api/attendance", attendanceRoutes);
@@ -63,15 +92,18 @@ app.get("/api/health", (req, res) => res.json({ ok: true }));
 // ============================================================
 const frontendPath = path.join(__dirname, "../../dist");
 
+console.log("📁 Serving frontend from:", frontendPath);
+
 app.use(express.static(frontendPath));
 
 // SPA fallback — kahit anong route na hindi /api o /iclock, ibalik ang index.html
 app.get(/^(?!\/api|\/iclock).*/, (req, res) => {
   res.sendFile(path.join(frontendPath, "index.html"));
 });
-// ============================================================
 
+// ============================================================
 // Error handler — dapat laging PINAKAHULI
+// ============================================================
 app.use((err, req, res, next) => {
   console.error("❌ Express error handler:", err);
   res.status(500).json({ error: err.message ?? "Internal server error" });

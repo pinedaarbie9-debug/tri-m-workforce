@@ -1,7 +1,30 @@
 // src/lib/api.ts
 // Kapalit ng supabase.ts — plain fetch wrapper papunta sa Express backend natin.
 
-const API_URL = import.meta.env.VITE_API_URL ?? "http://localhost:4000/api";
+// ============================================================
+// API URL resolution
+// - Sa production (HostForge custom domain): gumamit ng relative "/api"
+//   para automatic mag-hit sa parehong domain.
+// - Sa local dev (Vite sa :5173, backend sa :4000): kailangan ng absolute URL.
+// - Kung may VITE_API_URL env var (halimbawa sa Vercel): yun ang priority.
+// ============================================================
+const API_URL = (() => {
+  // Priority 1: explicit env var (Vercel, HostForge, atbp.)
+  if (import.meta.env.VITE_API_URL) {
+    return import.meta.env.VITE_API_URL;
+  }
+
+  // Priority 2: sa production build, gumamit ng relative path
+  // (kasi naka-serve na yung frontend at backend sa parehong domain)
+  if (import.meta.env.PROD) {
+    return "/api";
+  }
+
+  // Priority 3: local dev fallback
+  return "http://localhost:4000/api";
+})();
+
+console.log("🌐 API_URL:", API_URL);
 
 function getToken(): string | null {
   return localStorage.getItem("wms_token");
@@ -29,7 +52,9 @@ export class ApiError extends Error {
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const token = getToken();
-  const res = await fetch(`${API_URL}${path}`, {
+  const url = `${API_URL}${path}`;
+
+  const res = await fetch(url, {
     ...options,
     headers: {
       "Content-Type": "application/json",
