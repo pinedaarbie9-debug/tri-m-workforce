@@ -5,7 +5,16 @@ import { requireAuth } from "../middleware/auth.js";
 const router = Router();
 router.use(requireAuth);
 
-// GET /dashboard/stats
+function safeParseJSON(value) {
+  if (value == null) return null;
+  if (typeof value === "object") return value;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return null;
+  }
+}
+
 router.get("/stats", async (req, res) => {
   const [[{ total }]] = [await q("SELECT COUNT(*) AS total FROM employees")];
   const [[{ newHires }]] = [await q(
@@ -54,17 +63,6 @@ router.get("/stats", async (req, res) => {
   });
 });
 
-// GET /dashboard/recent-activity
-// FIX #1: dating direktang e.full_name lang ang ginagamit — kung blangko ang
-// column na iyon sa DB (kadalasan first_name/last_name lang ang naka-fill up),
-// blangko rin ang lumalabas sa Recent Activity feed. Ngayon, gaya ng ibang
-// parte ng app (biometric.js, atbp.), gagamitin ang COALESCE/CONCAT fallback.
-//
-// FIX #2: may label itong "Today's workforce activity log" sa frontend, pero
-// dati ay wala talagang WHERE clause na naghahanap lang ng logs ngayong araw
-// — kaya lumalabas doon ang mga logs kahit galing pa sa nakaraang araw.
-// Idinagdag ang "WHERE DATE(al.timestamp) = CURDATE()" para tumugma talaga
-// sa sinasabi nitong pamagat.
 router.get("/recent-activity", async (req, res) => {
   const rows = await q(`
     SELECT
@@ -81,12 +79,9 @@ router.get("/recent-activity", async (req, res) => {
     ORDER BY al.timestamp DESC
     LIMIT 6
   `);
-  res.json(rows.map((r) => ({ ...r, employee: JSON.parse(r.employee) })));
+  res.json(rows.map((r) => ({ ...r, employee: safeParseJSON(r.employee) })));
 });
 
-// GET /dashboard/live-punch
-// FIX: parehong COALESCE fallback dinagdag dito (dati full_name COALESCE na
-// pero i-verify lang natin na consistent).
 router.get("/live-punch", async (req, res) => {
   const rows = await q(`
     SELECT
@@ -105,7 +100,6 @@ router.get("/live-punch", async (req, res) => {
   res.json(rows[0] ?? null);
 });
 
-// GET /dashboard/shift-distribution
 router.get("/shift-distribution", async (req, res) => {
   const rows = await q(`
     SELECT s.type, COUNT(*) AS cnt

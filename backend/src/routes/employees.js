@@ -7,6 +7,19 @@ import { logAudit } from "../utils/auditlog.js";
 const router = Router();
 router.use(requireAuth);
 
+// FIX: safe parse — kung object na (bagong mysql2 auto-parses JSON columns),
+// ibalik na lang siya diretso. Kung string pa (lumang driver behavior), saka
+// lang natin i-JSON.parse. Iniiwasan nito yung "[object Object] is not valid JSON" crash.
+function safeParseJSON(value) {
+  if (value == null) return null;
+  if (typeof value === "object") return value;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return null;
+  }
+}
+
 const SELECT_EMPLOYEE = `
   SELECT
     e.id, e.employee_code, e.first_name, e.last_name,
@@ -28,7 +41,7 @@ router.get("/me", async (req, res) => {
     }
     const rows = await q(`${SELECT_EMPLOYEE} WHERE e.id = :id`, { id: req.user.employee_id });
     if (!rows[0]) return res.status(404).json({ error: "Employee not found" });
-    res.json({ ...rows[0], department: rows[0].department ? JSON.parse(rows[0].department) : null });
+    res.json({ ...rows[0], department: safeParseJSON(rows[0].department) });
   } catch (err) {
     console.error("GET /employees/me error:", err);
     res.status(500).json({ error: err.sqlMessage ?? err.message ?? "Failed to fetch profile" });
@@ -64,7 +77,7 @@ router.get("/trash", async (req, res) => {
       WHERE e.deleted_at IS NOT NULL
       ORDER BY e.deleted_at DESC
     `);
-    const parsed = rows.map((r) => ({ ...r, department: r.department ? JSON.parse(r.department) : null }));
+    const parsed = rows.map((r) => ({ ...r, department: safeParseJSON(r.department) }));
     res.json(parsed);
   } catch (err) {
     console.error("GET /employees/trash error:", err);
@@ -136,7 +149,7 @@ router.delete("/:id/permanent", async (req, res) => {
 router.get("/", async (req, res) => {
   try {
     const rows = await q(`${SELECT_EMPLOYEE} WHERE e.deleted_at IS NULL ORDER BY e.created_at DESC`);
-    const parsed = rows.map((r) => ({ ...r, department: r.department ? JSON.parse(r.department) : null }));
+    const parsed = rows.map((r) => ({ ...r, department: safeParseJSON(r.department) }));
     res.json(parsed);
   } catch (err) {
     console.error("GET /employees error:", err);
@@ -148,7 +161,7 @@ router.get("/:id", async (req, res) => {
   try {
     const rows = await q(`${SELECT_EMPLOYEE} WHERE e.id = :id`, { id: req.params.id });
     if (!rows[0]) return res.status(404).json({ error: "Employee not found" });
-    res.json({ ...rows[0], department: rows[0].department ? JSON.parse(rows[0].department) : null });
+    res.json({ ...rows[0], department: safeParseJSON(rows[0].department) });
   } catch (err) {
     console.error("GET /employees/:id error:", err);
     res.status(500).json({ error: err.sqlMessage ?? err.message ?? "Failed to fetch employee" });
@@ -160,7 +173,7 @@ router.post("/", async (req, res) => {
     const { first_name, last_name, email, phone, job_title, department_id, employment_type, status, hire_date } = req.body;
 
     const prefixRows = await q(`SELECT value FROM settings WHERE \`key\` = 'employee_id_prefix'`);
-    const prefix = prefixRows[0] ? JSON.parse(prefixRows[0].value) : "EMP-";
+    const prefix = prefixRows[0] ? safeParseJSON(prefixRows[0].value) ?? "EMP-" : "EMP-";
 
     const countRows = await q(`SELECT COUNT(*) AS count FROM employees WHERE employee_code LIKE :pattern`, {
       pattern: `${prefix}%`,

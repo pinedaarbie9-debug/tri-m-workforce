@@ -5,6 +5,16 @@ import { requireAuth } from "../middleware/auth.js";
 const router = Router();
 router.use(requireAuth);
 
+function safeParseJSON(value) {
+  if (value == null) return null;
+  if (typeof value === "object") return value;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return null;
+  }
+}
+
 router.get("/", async (req, res) => {
   try {
     const rows = await q(`
@@ -19,9 +29,9 @@ router.get("/", async (req, res) => {
 
     const parsed = rows.map((r) => ({
       ...r,
-      user: r.user ? JSON.parse(r.user) : null,
-      old_values: r.old_values ? JSON.parse(r.old_values) : null,
-      new_values: r.new_values ? JSON.parse(r.new_values) : null,
+      user: safeParseJSON(r.user),
+      old_values: safeParseJSON(r.old_values),
+      new_values: safeParseJSON(r.new_values),
     }));
 
     res.json(parsed);

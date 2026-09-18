@@ -7,9 +7,18 @@ import { logAudit } from "../utils/auditlog.js";
 const router = Router();
 router.use(requireAuth);
 
-// Simpleng role-guard helper. Tanging admin/HR ang puwedeng mag-enroll,
-// mag-edit, o mag-delete ng biometric credentials. Basta naka-login lang
-// dati (kahit employee role) puwede — mapanganib iyon.
+// FIX: safe parse — kung object na (bagong mysql2 auto-parses JSON columns),
+// ibalik na lang siya diretso. Kung string pa, saka lang natin i-JSON.parse.
+function safeParseJSON(value) {
+  if (value == null) return null;
+  if (typeof value === "object") return value;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return null;
+  }
+}
+
 function requireRole(...roles) {
   return (req, res, next) => {
     if (!req.user?.role || !roles.includes(req.user.role)) {
@@ -19,17 +28,6 @@ function requireRole(...roles) {
   };
 }
 
-// -----------------------------------------------------------------------
-// GET /biometric-credentials
-// -----------------------------------------------------------------------
-// FIX (ito yung dating kulang): kinukuha na lang ang mga AKTIBONG
-// credentials by default — kaya kapag na-delete/na-deactivate mo ang isa,
-// AGAD siyang mawawala dito sa Biometric Auth listahan. Ang audit_logs
-// entry niya ay hiwalay na table, kaya hindi ito naapektuhan — permanente
-// pa rin doon ang history.
-//
-// Kung minsan gusto pa ring makita ang mga naka-deactivate (hal. para sa
-// pag-audit o restore later), idagdag ang ?include_inactive=true sa URL.
 router.get("/", async (req, res) => {
   try {
     const includeInactive = req.query.include_inactive === "true";
@@ -47,14 +45,13 @@ router.get("/", async (req, res) => {
       ${includeInactive ? "" : "WHERE b.is_active = TRUE"}
       ORDER BY b.registered_at DESC
     `);
-    res.json(rows.map((r) => ({ ...r, employee: JSON.parse(r.employee), is_active: !!r.is_active })));
+    res.json(rows.map((r) => ({ ...r, employee: safeParseJSON(r.employee), is_active: !!r.is_active })));
   } catch (err) {
     console.error("GET /biometric-credentials error:", err);
     res.status(500).json({ error: err.sqlMessage ?? err.message ?? "Failed to fetch credentials" });
   }
 });
 
-// GET /biometric-credentials/employee-count
 router.get("/employee-count", async (req, res) => {
   try {
     const rows = await q("SELECT COUNT(*) AS count FROM employees");
@@ -65,7 +62,6 @@ router.get("/employee-count", async (req, res) => {
   }
 });
 
-// GET /biometric-credentials/stats
 router.get("/stats", async (req, res) => {
   try {
     const [[{ totalEmployees }]] = [
@@ -99,7 +95,6 @@ router.get("/stats", async (req, res) => {
   }
 });
 
-// GET /biometric-credentials/pending
 router.get("/pending", async (req, res) => {
   try {
     const rows = await q(`
@@ -123,7 +118,6 @@ router.get("/pending", async (req, res) => {
   }
 });
 
-// GET /biometric-credentials/me/face-descriptor
 router.get("/me/face-descriptor", async (req, res) => {
   try {
     if (!req.user.employee_id) {
@@ -138,19 +132,13 @@ router.get("/me/face-descriptor", async (req, res) => {
     if (!rows[0] || !rows[0].face_descriptor) {
       return res.status(404).json({ error: "Wala kang naka-enroll na Face ID. Pumunta sa Biometric Auth para mag-enroll." });
     }
-    res.json({ face_descriptor: JSON.parse(rows[0].face_descriptor) });
+    res.json({ face_descriptor: safeParseJSON(rows[0].face_descriptor) });
   } catch (err) {
     console.error("GET /biometric-credentials/me/face-descriptor error:", err);
     res.status(500).json({ error: err.sqlMessage ?? err.message ?? "Failed to fetch face descriptor" });
   }
 });
 
-// -----------------------------------------------------------------------
-// GET /biometric-credentials/generate-pin
-// -----------------------------------------------------------------------
-// Tinatawag ito ng frontend PAGBUKAS ng Enroll modal (kapag device_type
-// === "fingerprint") para makuha ang susunod na available at hindi-
-// nagko-conflict na PIN — hindi na kailangang mag-type ang admin.
 router.get("/generate-pin", requireRole("admin", "hr_manager"), async (req, res) => {
   try {
     const pin = await generateUniquePin();
@@ -164,9 +152,6 @@ router.get("/generate-pin", requireRole("admin", "hr_manager"), async (req, res)
   }
 });
 
-// Helper — kunin ang pangalan ng employee, gagamitin sa audit log
-// oldValues/newValues para may makitang PANGALAN sa Audit Logs page
-// (hindi lang ID).
 async function getEmployeeName(employee_id) {
   const rows = await q(
     `SELECT COALESCE(NULLIF(full_name, ''), CONCAT(first_name, ' ', last_name)) AS full_name
@@ -176,11 +161,6 @@ async function getEmployeeName(employee_id) {
   return rows[0]?.full_name ?? null;
 }
 
-// FIX: dati, ang WHERE clause dito ay kinukuha lang ang mga AKTIBONG
-// (is_active = TRUE) fingerprint rows para i-check ang PIN conflict. Ito
-// ay TAMA — sinasadya ito, dahil kung na-deactivate mo na ang lumang PIN
-// "1001", dapat puwede na itong i-reuse ng bagong enrollment. Walang
-// binago dito, nilagay ko lang itong comment para malinaw kung bakit.
 async function checkPinConflict(credential_id, excludeId = null) {
   if (!credential_id) return null;
   const rows = await q(
@@ -192,10 +172,6 @@ async function checkPinConflict(credential_id, excludeId = null) {
   return rows.length ? rows[0].id : null;
 }
 
-// Helper na ginagamit ng /generate-pin endpoint AT ng enroll endpoint
-// (bilang fallback kapag walang PIN na binigay ang frontend). Random
-// 4-digit na PIN, tinitiyak na walang banggaan sa isa pang AKTIBONG
-// fingerprint credential.
 async function generateUniquePin(length = 4) {
   const min = 10 ** (length - 1);
   const max = 10 ** length - 1;
@@ -209,7 +185,6 @@ async function generateUniquePin(length = 4) {
   return pin;
 }
 
-// POST /biometric-credentials — Enroll Device
 router.post("/", requireRole("admin", "hr_manager"), async (req, res) => {
   try {
     const { employee_id, device_type } = req.body;
@@ -285,7 +260,6 @@ router.post("/", requireRole("admin", "hr_manager"), async (req, res) => {
   }
 });
 
-// PUT /biometric-credentials/:id — EDIT
 router.put("/:id", requireRole("admin", "hr_manager"), async (req, res) => {
   try {
     const { id } = req.params;
@@ -354,12 +328,6 @@ router.put("/:id", requireRole("admin", "hr_manager"), async (req, res) => {
   }
 });
 
-// -----------------------------------------------------------------------
-// DELETE /biometric-credentials/clear-all — Bulk clear
-// -----------------------------------------------------------------------
-// MAHALAGA: kailangan itong nasa ITAAS ng "DELETE /:id" na route sa baba,
-// dahil kung nasa ibaba ito, ituturing ng Express na ":id" ang literal na
-// salitang "clear-all" at hindi na aabot dito.
 router.delete("/clear-all", requireRole("admin"), async (req, res) => {
   try {
     const hard = req.query.hard === "true";
@@ -398,7 +366,6 @@ router.delete("/clear-all", requireRole("admin"), async (req, res) => {
   }
 });
 
-// DELETE /biometric-credentials/:id — DEACTIVATE (soft delete) o HARD delete
 router.delete("/:id", requireRole("admin"), async (req, res) => {
   try {
     const { id } = req.params;

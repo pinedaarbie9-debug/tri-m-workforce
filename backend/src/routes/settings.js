@@ -5,6 +5,20 @@ import { requireAuth, requireRole } from "../middleware/auth.js";
 const router = Router();
 router.use(requireAuth);
 
+// FIX: safe parse — kung object/number/boolean na (bagong mysql2 auto-parses
+// JSON columns), ibalik na lang siya diretso. Kung string pa, saka lang
+// natin i-JSON.parse. Iniiwasan nito yung "[object Object] is not valid JSON" crash.
+function safeParseJSON(value) {
+  if (value == null) return null;
+  if (typeof value === "object") return value;
+  if (typeof value !== "string") return value;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return value;
+  }
+}
+
 // GET: pwedeng tingnan ng admin at hr_manager (i-adjust kung sino talaga ang dapat)
 router.get("/", requireRole("admin", "hr_manager"), async (req, res) => {
   try {
@@ -13,7 +27,7 @@ router.get("/", requireRole("admin", "hr_manager"), async (req, res) => {
       FROM settings
       ORDER BY category, label
     `);
-    const parsed = rows.map((r) => ({ ...r, value: JSON.parse(r.value) }));
+    const parsed = rows.map((r) => ({ ...r, value: safeParseJSON(r.value) }));
     res.json(parsed);
   } catch (err) {
     console.error("GET /settings error:", err);

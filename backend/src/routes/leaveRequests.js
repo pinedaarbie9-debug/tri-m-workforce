@@ -1,9 +1,20 @@
 import { Router } from "express";
+import crypto from "node:crypto";
 import { q } from "../db.js";
 import { requireAuth } from "../middleware/auth.js";
 
 const router = Router();
 router.use(requireAuth);
+
+function safeParseJSON(value) {
+  if (value == null) return null;
+  if (typeof value === "object") return value;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return null;
+  }
+}
 
 async function notifyAdmins({ type, title, message }) {
   const admins = await q("SELECT id FROM users WHERE role IN ('admin','hr_manager','supervisor') AND status = 'active'");
@@ -24,7 +35,6 @@ async function notifyEmployeeOwner(employee_id, { type, title, message }) {
   );
 }
 
-// GET /leave-requests/me
 router.get("/me", async (req, res) => {
   try {
     if (!req.user.employee_id) {
@@ -41,7 +51,6 @@ router.get("/me", async (req, res) => {
   }
 });
 
-// POST /leave-requests/me — mag-file ng sariling leave request, may validation + notify admins
 router.post("/me", async (req, res) => {
   try {
     if (!req.user.employee_id) {
@@ -56,14 +65,12 @@ router.post("/me", async (req, res) => {
     const end = new Date(end_date);
     const days_count = Math.max(1, Math.round((end - start) / (1000 * 60 * 60 * 24)) + 1);
 
-    // ---- Kunin ang leave settings ----
     const settingsRows = await q(
       `SELECT \`key\`, value FROM settings WHERE \`key\` IN ('advance_notice_days', 'annual_leave_days', 'sick_leave_days')`
     );
     const settings = {};
-    settingsRows.forEach((r) => { settings[r.key] = JSON.parse(r.value); });
+    settingsRows.forEach((r) => { settings[r.key] = safeParseJSON(r.value); });
 
-    // ---- 1. Advance notice validation ----
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     const daysUntilStart = Math.round((start - today) / (1000 * 60 * 60 * 24));
@@ -74,9 +81,6 @@ router.post("/me", async (req, res) => {
       });
     }
 
-    // ---- 2. Entitlement validation (annual/sick) ----
-    // TANDAAN: i-verify ang exact enum values ng leave_type column — kung iba ang
-    // ginagamit mong string dito ("vacation" imbes na "annual", atbp.), palitan sa ibaba.
     if (leave_type === "annual" || leave_type === "sick") {
       const entitlementKey = leave_type === "annual" ? "annual_leave_days" : "sick_leave_days";
       const entitlement = settings[entitlementKey] ?? 0;
@@ -127,7 +131,6 @@ router.post("/me", async (req, res) => {
   }
 });
 
-// GET /leave-requests — admin/HR
 router.get("/", async (req, res) => {
   try {
     const rows = await q(`
@@ -145,14 +148,13 @@ router.get("/", async (req, res) => {
       LEFT JOIN departments d ON d.id = e.department_id
       ORDER BY l.created_at DESC
     `);
-    res.json(rows.map((r) => ({ ...r, employee: JSON.parse(r.employee) })));
+    res.json(rows.map((r) => ({ ...r, employee: safeParseJSON(r.employee) })));
   } catch (err) {
     console.error("GET /leave-requests error:", err);
     res.status(500).json({ error: err.sqlMessage ?? err.message ?? "Failed to fetch leave requests" });
   }
 });
 
-// POST /leave-requests — admin/HR, gumagawa "para sa" kahit sinong empleyado
 router.post("/", async (req, res) => {
   try {
     const { employee_id, leave_type, start_date, end_date, reason } = req.body;
@@ -181,7 +183,6 @@ router.post("/", async (req, res) => {
   }
 });
 
-// PATCH /leave-requests/:id/status — approve/reject + notify ang empleyado
 router.patch("/:id/status", async (req, res) => {
   try {
     const { status } = req.body;
