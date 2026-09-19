@@ -15,19 +15,19 @@ import {
 const router = Router();
 
 // ============================================================
-// 🔒 GRADUATED LOCKOUT SYSTEM (per-email/account, stored in DB)
+// 🔒 GRADUATED LOCKOUT SYSTEM — TESTING VALUES (mabilis i-verify)
 // ============================================================
-// Attempts 1-6:   Generic error lang (walang clue)
-// Attempts 7-9:   Lockout 1 minute
-// Attempts 10+:   Lockout 5 minutes
+// Attempts 1-2:   Generic error lang
+// Attempts 3:     Lockout 10 seconds
+// Attempts 4+:    Lockout 20 seconds
 // ============================================================
 const LOCKOUT_TIERS = [
-  { threshold: 10, lockoutSeconds: 300 }, // 5 minutes
-  { threshold: 7,  lockoutSeconds: 60  }, // 1 minute
+  { threshold: 4, lockoutSeconds: 20 },
+  { threshold: 3, lockoutSeconds: 10 },
 ];
 
-const FIRST_LOCKOUT_THRESHOLD = 7;
-const DEFAULT_LOCKOUT_SECONDS = 60;
+const FIRST_LOCKOUT_THRESHOLD = 3;
+const DEFAULT_LOCKOUT_SECONDS = 10;
 
 const JWT_EXPIRES_IN = "1d";
 const FACE_THRESHOLD = 0.6;
@@ -93,9 +93,13 @@ async function issueSession(user, req) {
   };
 }
 
+// 🔍 DEBUG: nag-lo-log ngayon sa console para makita natin kung tumataas ba
+// talaga yung attempts count at anong tier ang napipili kada attempt.
 async function registerFailedAttempt(user) {
   const attempts = (user.failed_login_attempts ?? 0) + 1;
   const lockoutSeconds = getLockoutSeconds(attempts);
+
+  console.log(`🔍 LOCKOUT DEBUG — email: ${user.email}, previous attempts: ${user.failed_login_attempts ?? 0}, new attempts: ${attempts}, assigned lockoutSeconds: ${lockoutSeconds}`);
 
   if (attempts >= FIRST_LOCKOUT_THRESHOLD) {
     await q(
@@ -140,6 +144,7 @@ router.post("/login", async (req, res) => {
 
     if (user.locked_until && new Date(user.locked_until) > new Date()) {
       const secsLeft = Math.ceil((new Date(user.locked_until) - new Date()) / 1000);
+      console.log(`🔍 LOCKOUT DEBUG — ${user.email} is STILL LOCKED, secsLeft: ${secsLeft}, locked_until: ${user.locked_until}`);
       return res.status(403).json({
         error: `Too many login attempts. Try again in ${formatDuration(secsLeft)}.`,
         locked_until: user.locked_until,
