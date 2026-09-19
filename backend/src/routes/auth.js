@@ -15,19 +15,19 @@ import {
 const router = Router();
 
 // ============================================================
-// 🔒 GRADUATED LOCKOUT SYSTEM — TESTING VALUES (mabilis i-verify)
+// 🔒 GRADUATED LOCKOUT SYSTEM — PRODUCTION VALUES
 // ============================================================
-// Attempts 1-2:   Generic error lang
-// Attempts 3:     Lockout 10 seconds
-// Attempts 4+:    Lockout 20 seconds
+// Attempts 1-6:  Generic error lang
+// Attempts 7-14: Lockout 1 minute
+// Attempts 15+:  Lockout 5 minutes
 // ============================================================
 const LOCKOUT_TIERS = [
-  { threshold: 4, lockoutSeconds: 20 },
-  { threshold: 3, lockoutSeconds: 10 },
+  { threshold: 15, lockoutSeconds: 300 }, // 5 minutes
+  { threshold: 7,  lockoutSeconds: 60  }, // 1 minute
 ];
 
-const FIRST_LOCKOUT_THRESHOLD = 3;
-const DEFAULT_LOCKOUT_SECONDS = 10;
+const FIRST_LOCKOUT_THRESHOLD = 7;
+const DEFAULT_LOCKOUT_SECONDS = 60;
 
 const JWT_EXPIRES_IN = "1d";
 const FACE_THRESHOLD = 0.6;
@@ -56,6 +56,25 @@ function euclideanDistance(a, b) {
   let sum = 0;
   for (let i = 0; i < a.length; i++) sum += (a[i] - b[i]) ** 2;
   return Math.sqrt(sum);
+}
+
+// ============================================================
+// 🔒 Auto-reset: kung expired na ang lockout, i-reset ang counter
+// ============================================================
+async function autoResetLockoutIfExpired(user) {
+  if (!user.locked_until) return user;
+  
+  const isExpired = new Date(user.locked_until) <= new Date();
+  if (isExpired) {
+    console.log(`🔍 Auto-reset lockout for ${user.email} (expired)`);
+    await q(
+      "UPDATE users SET failed_login_attempts = 0, locked_until = NULL WHERE id = :id",
+      { id: user.id }
+    );
+    user.failed_login_attempts = 0;
+    user.locked_until = null;
+  }
+  return user;
 }
 
 async function issueSession(user, req) {
@@ -93,13 +112,16 @@ async function issueSession(user, req) {
   };
 }
 
-// 🔍 DEBUG: nag-lo-log ngayon sa console para makita natin kung tumataas ba
-// talaga yung attempts count at anong tier ang napipili kada attempt.
+// ============================================================
+// 🔒 registerFailedAttempt — may auto-reset check
+// ============================================================
 async function registerFailedAttempt(user) {
-  const attempts = (user.failed_login_attempts ?? 0) + 1;
-  const lockoutSeconds = getLockoutSeconds(attempts);
+  let currentAttempts = user.failed_login_attempts ?? 0;
+  const lockoutSeconds = getLockoutSeconds(currentAttempts + 1);
 
-  console.log(`🔍 LOCKOUT DEBUG — email: ${user.email}, previous attempts: ${user.failed_login_attempts ?? 0}, new attempts: ${attempts}, assigned lockoutSeconds: ${lockoutSeconds}`);
+  console.log(`🔍 Attempt for ${user.email}: previous=${currentAttempts}, new=${currentAttempts + 1}, lockout=${lockoutSeconds}s`);
+
+  const attempts = currentAttempts + 1;
 
   if (attempts >= FIRST_LOCKOUT_THRESHOLD) {
     await q(
@@ -129,6 +151,9 @@ function buildMfaRequiredResponse(user) {
   };
 }
 
+// ============================================================
+// POST /api/auth/login
+// ============================================================
 router.post("/login", async (req, res) => {
   try {
     const parsed = loginSchema.safeParse(req.body);
@@ -136,15 +161,19 @@ router.post("/login", async (req, res) => {
     const { email, password } = parsed.data;
 
     const rows = await q("SELECT * FROM users WHERE email = :email LIMIT 1", { email });
-    const user = rows[0];
+    let user = rows[0];
 
+    // 🔒 Generic error — hindi nag-e-enumerate ng valid emails
     if (!user) {
       return res.status(401).json({ error: "Invalid email or password." });
     }
 
+    // 🔒 AUTO-RESET: kung expired na ang lockout, i-reset ang counter
+    user = await autoResetLockoutIfExpired(user);
+
+    // 🔒 Check lockout — kung naka-lock pa
     if (user.locked_until && new Date(user.locked_until) > new Date()) {
       const secsLeft = Math.ceil((new Date(user.locked_until) - new Date()) / 1000);
-      console.log(`🔍 LOCKOUT DEBUG — ${user.email} is STILL LOCKED, secsLeft: ${secsLeft}, locked_until: ${user.locked_until}`);
       return res.status(403).json({
         error: `Too many login attempts. Try again in ${formatDuration(secsLeft)}.`,
         locked_until: user.locked_until,
@@ -164,6 +193,7 @@ router.post("/login", async (req, res) => {
         });
       }
 
+      // 🔒 Generic error — walang attempts counter
       return res.status(401).json({ error: "Invalid email or password." });
     }
 
@@ -182,6 +212,9 @@ router.post("/login", async (req, res) => {
   }
 });
 
+// ============================================================
+// POST /api/auth/face-login
+// ============================================================
 router.post("/face-login", async (req, res) => {
   try {
     const parsed = faceLoginSchema.safeParse(req.body);
@@ -219,13 +252,16 @@ router.post("/face-login", async (req, res) => {
       "SELECT * FROM users WHERE employee_id = :employee_id LIMIT 1",
       { employee_id: bestEmployeeId }
     );
-    const user = userRows[0];
+    let user = userRows[0];
 
     if (!user) {
       return res.status(404).json({
         error: "Face recognized but no linked login account. Please contact admin.",
       });
     }
+
+    // 🔒 AUTO-RESET
+    user = await autoResetLockoutIfExpired(user);
 
     if (user.locked_until && new Date(user.locked_until) > new Date()) {
       const secsLeft = Math.ceil((new Date(user.locked_until) - new Date()) / 1000);
@@ -251,6 +287,9 @@ router.post("/face-login", async (req, res) => {
   }
 });
 
+// ============================================================
+// POST /api/auth/verify-mfa
+// ============================================================
 router.post("/verify-mfa", async (req, res) => {
   try {
     const parsed = verifyMfaSchema.safeParse(req.body);
@@ -311,6 +350,9 @@ router.post("/verify-mfa", async (req, res) => {
   }
 });
 
+// ============================================================
+// GET /api/auth/me
+// ============================================================
 router.get("/me", requireAuth, async (req, res) => {
   try {
     return res.json(req.user);
@@ -319,6 +361,9 @@ router.get("/me", requireAuth, async (req, res) => {
   }
 });
 
+// ============================================================
+// POST /api/auth/logout
+// ============================================================
 router.post("/logout", requireAuth, async (req, res) => {
   try {
     await q(

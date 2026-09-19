@@ -23,16 +23,11 @@ type LoginForm = z.infer<typeof loginSchema>;
 const SMOOTH_EASE = [0.22, 1, 0.36, 1] as const;
 const BOUNCE_EASE = [0.34, 1.56, 0.64, 1] as const;
 
-// 🔒 Per-email lockout keys
-const LOCKOUT_KEY_PREFIX = "wms_lockout_until:";
+// 🔒 DEVICE-LEVEL lockout key (hindi per-email)
+const DEVICE_LOCKOUT_KEY = "wms_device_lockout_until";
 const LAST_EMAIL_KEY = "wms_last_email";
-const FACE_LOCKOUT_KEY = "wms_lockout_until:_face_login_";
 
-function getLockoutKey(email: string): string {
-  return `${LOCKOUT_KEY_PREFIX}${email.toLowerCase().trim()}`;
-}
-
-// FIX: bagong helper — nag-fo-format ng seconds papunta sa "M:SS" (e.g. 65 -> "1:05")
+// 🔒 Format seconds → "M:SS"
 function formatMMSS(totalSeconds: number): string {
   const safeSeconds = Math.max(0, Math.floor(totalSeconds));
   const minutes = Math.floor(safeSeconds / 60);
@@ -40,22 +35,22 @@ function formatMMSS(totalSeconds: number): string {
   return `${minutes}:${String(seconds).padStart(2, "0")}`;
 }
 
-function getLockoutForEmail(email: string): { seconds: number; message: string | null } {
-  if (!email) return { seconds: 0, message: null };
+// 🔒 Device-level lockout check
+function getDeviceLockout(): { seconds: number; message: string | null } {
   try {
-    const key = getLockoutKey(email);
-    const stored = localStorage.getItem(key);
+    const stored = localStorage.getItem(DEVICE_LOCKOUT_KEY);
     if (!stored) return { seconds: 0, message: null };
     const lockoutUntil = Number(stored);
     if (isNaN(lockoutUntil)) {
-      localStorage.removeItem(key);
+      localStorage.removeItem(DEVICE_LOCKOUT_KEY);
       return { seconds: 0, message: null };
     }
     const remaining = Math.ceil((lockoutUntil - Date.now()) / 1000);
     if (remaining > 0) {
       return { seconds: remaining, message: "Too many login attempts." };
     }
-    localStorage.removeItem(key);
+    // 🔒 Auto-reset pagkatapos mag-expire
+    localStorage.removeItem(DEVICE_LOCKOUT_KEY);
     return { seconds: 0, message: null };
   } catch {
     return { seconds: 0, message: null };
@@ -222,15 +217,15 @@ export function LoginPage() {
   const [isLoading, setIsLoading] = useState(false);
   const [success, setSuccess] = useState(false);
 
-  // 🔒 Restore last email from localStorage
-  const [lastEmail, setLastEmail] = useState<string>(() => {
-    return localStorage.getItem(LAST_EMAIL_KEY) || "";
-  });
-
-  // 🔒 Compute initial lockout state ONCE for last email
-  const initialLockout = getLockoutForEmail(lastEmail);
+  // 🔒 DEVICE-LEVEL lockout (hindi per-email)
+  const initialLockout = getDeviceLockout();
   const [error, setError] = useState<string | null>(initialLockout.message);
   const [lockoutSeconds, setLockoutSeconds] = useState(initialLockout.seconds);
+
+  // 🔒 Restore last email
+  const [lastEmail] = useState<string>(() => {
+    return localStorage.getItem(LAST_EMAIL_KEY) || "";
+  });
 
   const [mfaRequired, setMfaRequired] = useState(false);
   const [mfaTempToken, setMfaTempToken] = useState("");
@@ -238,22 +233,34 @@ export function LoginPage() {
   const [mfaError, setMfaError] = useState<string | null>(null);
   const [mfaLoading, setMfaLoading] = useState(false);
 
-  const { register, handleSubmit, formState: { errors }, watch } = useForm<LoginForm>({
+  const { register, handleSubmit, formState: { errors } } = useForm<LoginForm>({
     defaultValues: {
       email: lastEmail,
       password: "",
     },
   });
 
-  // 🔒 Watch email field changes
-  const watchedEmail = watch("email");
+  // 🔒 Countdown timer
+  useEffect(() => {
+    if (lockoutSeconds <= 0) return;
+    const timer = setInterval(() => {
+      setLockoutSeconds((prev) => {
+        if (prev <= 1) {
+          clearInterval(timer);
+          setError(null);
+          localStorage.removeItem(DEVICE_LOCKOUT_KEY);
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [lockoutSeconds]);
 
   // 🔒 Sync sa visibility change at storage change
   useEffect(() => {
-    const checkLockoutForCurrentEmail = () => {
-      const email = watchedEmail || lastEmail;
-      if (!email) return;
-      const result = getLockoutForEmail(email);
+    const checkLockout = () => {
+      const result = getDeviceLockout();
       if (result.seconds > 0) {
         setLockoutSeconds(result.seconds);
         setError("Too many login attempts.");
@@ -264,16 +271,12 @@ export function LoginPage() {
     };
 
     const handleVisibilityChange = () => {
-      if (document.visibilityState === "visible") {
-        checkLockoutForCurrentEmail();
-      }
+      if (document.visibilityState === "visible") checkLockout();
     };
     document.addEventListener("visibilitychange", handleVisibilityChange);
 
     const handleStorageChange = (e: StorageEvent) => {
-      if (e.key && e.key.startsWith(LOCKOUT_KEY_PREFIX)) {
-        checkLockoutForCurrentEmail();
-      }
+      if (e.key === DEVICE_LOCKOUT_KEY) checkLockout();
     };
     window.addEventListener("storage", handleStorageChange);
 
@@ -281,27 +284,7 @@ export function LoginPage() {
       document.removeEventListener("visibilitychange", handleVisibilityChange);
       window.removeEventListener("storage", handleStorageChange);
     };
-  }, [watchedEmail, lastEmail, error]);
-
-  // 🔒 Countdown timer
-  useEffect(() => {
-    if (lockoutSeconds <= 0) return;
-    const timer = setInterval(() => {
-      setLockoutSeconds((prev) => {
-        if (prev <= 1) {
-          clearInterval(timer);
-          setError(null);
-          const email = watchedEmail || lastEmail;
-          if (email) {
-            localStorage.removeItem(getLockoutKey(email));
-          }
-          return 0;
-        }
-        return prev - 1;
-      });
-    }, 1000);
-    return () => clearInterval(timer);
-  }, [lockoutSeconds, watchedEmail, lastEmail]);
+  }, [error]);
 
   const isLocked = lockoutSeconds > 0;
 
@@ -310,24 +293,21 @@ export function LoginPage() {
 
     const normalizedEmail = data.email.toLowerCase().trim();
     localStorage.setItem(LAST_EMAIL_KEY, normalizedEmail);
-    setLastEmail(normalizedEmail);
 
     setIsLoading(true);
     setError(null);
     const res = await signIn(data.email, data.password);
 
     if (res.error) {
-      const lockoutKey = getLockoutKey(normalizedEmail);
-
       if (res.error.lockedUntil) {
         const lockoutUntil = new Date(res.error.lockedUntil).getTime();
-        localStorage.setItem(lockoutKey, lockoutUntil.toString());
+        localStorage.setItem(DEVICE_LOCKOUT_KEY, lockoutUntil.toString());
         const remaining = Math.ceil((lockoutUntil - Date.now()) / 1000);
         setLockoutSeconds(remaining);
         setError("Too many login attempts.");
       } else if (res.error.secondsLeft && res.error.secondsLeft > 0) {
         const lockoutUntil = Date.now() + res.error.secondsLeft * 1000;
-        localStorage.setItem(lockoutKey, lockoutUntil.toString());
+        localStorage.setItem(DEVICE_LOCKOUT_KEY, lockoutUntil.toString());
         setLockoutSeconds(res.error.secondsLeft);
         setError("Too many login attempts.");
       } else {
@@ -460,13 +440,13 @@ export function LoginPage() {
       if (res.error) {
         if (res.error.lockedUntil) {
           const lockoutUntil = new Date(res.error.lockedUntil).getTime();
-          localStorage.setItem(FACE_LOCKOUT_KEY, lockoutUntil.toString());
+          localStorage.setItem(DEVICE_LOCKOUT_KEY, lockoutUntil.toString());
           const remaining = Math.ceil((lockoutUntil - Date.now()) / 1000);
           setLockoutSeconds(remaining);
           setFaceError("Too many login attempts.");
         } else if (res.error.secondsLeft && res.error.secondsLeft > 0) {
           const lockoutUntil = Date.now() + res.error.secondsLeft * 1000;
-          localStorage.setItem(FACE_LOCKOUT_KEY, lockoutUntil.toString());
+          localStorage.setItem(DEVICE_LOCKOUT_KEY, lockoutUntil.toString());
           setLockoutSeconds(res.error.secondsLeft);
           setFaceError("Too many login attempts.");
         } else {
