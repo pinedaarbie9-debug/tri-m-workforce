@@ -32,6 +32,14 @@ function getLockoutKey(email: string): string {
   return `${LOCKOUT_KEY_PREFIX}${email.toLowerCase().trim()}`;
 }
 
+// FIX: bagong helper — nag-fo-format ng seconds papunta sa "M:SS" (e.g. 65 -> "1:05")
+function formatMMSS(totalSeconds: number): string {
+  const safeSeconds = Math.max(0, Math.floor(totalSeconds));
+  const minutes = Math.floor(safeSeconds / 60);
+  const seconds = safeSeconds % 60;
+  return `${minutes}:${String(seconds).padStart(2, "0")}`;
+}
+
 function getLockoutForEmail(email: string): { seconds: number; message: string | null } {
   if (!email) return { seconds: 0, message: null };
   try {
@@ -785,7 +793,7 @@ export function LoginPage() {
                           <AlertCircle className="w-4 h-4 text-destructive shrink-0" />
                           <p className="text-sm text-destructive">
                             {isLocked
-                              ? `Too many login attempts. Try again in ${lockoutSeconds}s.`
+                              ? `Too many login attempts. Try again in ${formatMMSS(lockoutSeconds)}.`
                               : error}
                           </p>
                         </motion.div>
@@ -869,7 +877,7 @@ export function LoginPage() {
                         className="w-full py-2.5 px-4 bg-primary hover:bg-primary/90 disabled:opacity-60 disabled:cursor-not-allowed text-white font-medium rounded-lg transition-colors duration-300 flex items-center justify-center gap-2 shadow-lg shadow-primary/25"
                       >
                         {isLocked ? (
-                          `Locked (${lockoutSeconds}s)`
+                          `Locked (${formatMMSS(lockoutSeconds)})`
                         ) : isLoading ? (
                           <><Loader2 className="w-4 h-4 animate-spin" /> Signing in...</>
                         ) : "Sign In"}
