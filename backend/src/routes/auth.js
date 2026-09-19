@@ -15,11 +15,11 @@ import {
 const router = Router();
 
 // ============================================================
-// 🔒 GRADUATED LOCKOUT SYSTEM
+// 🔒 GRADUATED LOCKOUT SYSTEM (per-email/account, stored in DB)
 // ============================================================
 // Attempts 1-6:   Generic error lang (walang clue)
 // Attempts 7-9:   Lockout 1 minute
-// Attempts 10+:   Lockout 5 minutes (mananatili dito kahit tumaas pa)
+// Attempts 10+:   Lockout 5 minutes
 // ============================================================
 const LOCKOUT_TIERS = [
   { threshold: 10, lockoutSeconds: 300 }, // 5 minutes
@@ -32,21 +32,13 @@ const DEFAULT_LOCKOUT_SECONDS = 60;
 const JWT_EXPIRES_IN = "1d";
 const FACE_THRESHOLD = 0.6;
 
-// ============================================================
-// 🔒 Helper: Hanapin ang tamang lockout duration
-// ============================================================
 function getLockoutSeconds(attempts) {
   for (const tier of LOCKOUT_TIERS) {
-    if (attempts >= tier.threshold) {
-      return tier.lockoutSeconds;
-    }
+    if (attempts >= tier.threshold) return tier.lockoutSeconds;
   }
   return DEFAULT_LOCKOUT_SECONDS;
 }
 
-// ============================================================
-// 🔒 Helper: I-format ang duration (seconds → "1 minute")
-// ============================================================
 function formatDuration(seconds) {
   if (seconds < 60) return `${seconds} seconds`;
   const minutes = Math.floor(seconds / 60);
@@ -55,27 +47,17 @@ function formatDuration(seconds) {
   return `${hours} hour${hours > 1 ? "s" : ""}`;
 }
 
-// ============================================================
-// 🔒 Helper: Zod v3 + v4 compatible error extractor
-// ============================================================
 function getZodError(parsed) {
-  const issues =
-    parsed?.error?.issues ?? parsed?.error?.errors ?? [];
+  const issues = parsed?.error?.issues ?? parsed?.error?.errors ?? [];
   return issues[0]?.message ?? "Invalid input.";
 }
 
-// ============================================================
-// Helper: Euclidean distance para sa face matching
-// ============================================================
 function euclideanDistance(a, b) {
   let sum = 0;
   for (let i = 0; i < a.length; i++) sum += (a[i] - b[i]) ** 2;
   return Math.sqrt(sum);
 }
 
-// ============================================================
-// Helper: Gumawa ng session at i-log sa audit_logs
-// ============================================================
 async function issueSession(user, req) {
   await q(
     "UPDATE users SET last_login = NOW(), failed_login_attempts = 0, locked_until = NULL WHERE id = :id",
@@ -111,14 +93,10 @@ async function issueSession(user, req) {
   };
 }
 
-// ============================================================
-// 🔒 Helper: I-track ang failed login attempts (GRADUATED)
-// ============================================================
 async function registerFailedAttempt(user) {
   const attempts = (user.failed_login_attempts ?? 0) + 1;
   const lockoutSeconds = getLockoutSeconds(attempts);
 
-  // Kung umabot sa 7+ attempts, i-lock ang account
   if (attempts >= FIRST_LOCKOUT_THRESHOLD) {
     await q(
       "UPDATE users SET failed_login_attempts = :attempts, locked_until = DATE_ADD(NOW(), INTERVAL :secs SECOND) WHERE id = :id",
@@ -127,7 +105,6 @@ async function registerFailedAttempt(user) {
     return { locked: true, attempts, lockoutSeconds };
   }
 
-  // Kung hindi pa, i-increment lang ang counter
   await q(
     "UPDATE users SET failed_login_attempts = :attempts WHERE id = :id",
     { attempts, id: user.id }
@@ -135,9 +112,6 @@ async function registerFailedAttempt(user) {
   return { locked: false, attempts, lockoutSeconds: 0 };
 }
 
-// ============================================================
-// Helper: MFA required response (may temp token)
-// ============================================================
 function buildMfaRequiredResponse(user) {
   const tempToken = jwt.sign(
     { id: user.id, mfa_pending: true },
@@ -151,69 +125,47 @@ function buildMfaRequiredResponse(user) {
   };
 }
 
-// ============================================================
-// POST /api/auth/login
-// ============================================================
 router.post("/login", async (req, res) => {
   try {
     const parsed = loginSchema.safeParse(req.body);
-    if (!parsed.success) {
-      return validationError(res, getZodError(parsed));
-    }
+    if (!parsed.success) return validationError(res, getZodError(parsed));
     const { email, password } = parsed.data;
 
-    const rows = await q(
-      "SELECT * FROM users WHERE email = :email LIMIT 1",
-      { email }
-    );
+    const rows = await q("SELECT * FROM users WHERE email = :email LIMIT 1", { email });
     const user = rows[0];
 
-    // 🔒 Generic error — hindi nag-e-enumerate ng valid emails
     if (!user) {
       return res.status(401).json({ error: "Invalid email or password." });
     }
 
-    // 🔒 Check lockout (still locked)
     if (user.locked_until && new Date(user.locked_until) > new Date()) {
-      const secsLeft = Math.ceil(
-        (new Date(user.locked_until) - new Date()) / 1000
-      );
-      const durationText = formatDuration(secsLeft);
+      const secsLeft = Math.ceil((new Date(user.locked_until) - new Date()) / 1000);
       return res.status(403).json({
-        error: `Too many login attempts. Try again in ${durationText}.`,
+        error: `Too many login attempts. Try again in ${formatDuration(secsLeft)}.`,
         locked_until: user.locked_until,
         seconds_left: secsLeft,
       });
     }
 
-    // 🔒 Verify password
     const valid = await bcrypt.compare(password, user.password_hash);
     if (!valid) {
       const result = await registerFailedAttempt(user);
 
       if (result.locked) {
-        const durationText = formatDuration(result.lockoutSeconds);
         return res.status(401).json({
-          error: `Too many login attempts. Try again in ${durationText}.`,
-          locked_until: new Date(
-            Date.now() + result.lockoutSeconds * 1000
-          ).toISOString(),
+          error: `Too many login attempts. Try again in ${formatDuration(result.lockoutSeconds)}.`,
+          locked_until: new Date(Date.now() + result.lockoutSeconds * 1000).toISOString(),
           seconds_left: result.lockoutSeconds,
         });
       }
 
-      // 🔒 Generic error — walang "attempts remaining" warning
       return res.status(401).json({ error: "Invalid email or password." });
     }
 
-    // 🔒 Check status
     if (user.status !== "active") {
-      return res
-        .status(403)
-        .json({ error: "This account is suspended or inactive." });
+      return res.status(403).json({ error: "This account is suspended or inactive." });
     }
 
-    // 🔒 MFA check
     if (user.mfa_enabled) {
       return res.json(buildMfaRequiredResponse(user));
     }
@@ -225,15 +177,10 @@ router.post("/login", async (req, res) => {
   }
 });
 
-// ============================================================
-// POST /api/auth/face-login
-// ============================================================
 router.post("/face-login", async (req, res) => {
   try {
     const parsed = faceLoginSchema.safeParse(req.body);
-    if (!parsed.success) {
-      return validationError(res, getZodError(parsed));
-    }
+    if (!parsed.success) return validationError(res, getZodError(parsed));
     const { face_descriptor } = parsed.data;
 
     const credentials = await q(
@@ -251,14 +198,7 @@ router.post("/face-login", async (req, res) => {
       } catch {
         continue;
       }
-
-      if (
-        !Array.isArray(stored) ||
-        stored.length !== face_descriptor.length
-      ) {
-        continue;
-      }
-
+      if (!Array.isArray(stored) || stored.length !== face_descriptor.length) continue;
       const dist = euclideanDistance(stored, face_descriptor);
       if (dist < bestDistance) {
         bestDistance = dist;
@@ -267,9 +207,7 @@ router.post("/face-login", async (req, res) => {
     }
 
     if (!bestEmployeeId || bestDistance > FACE_THRESHOLD) {
-      return res.status(401).json({
-        error: "No matching face found. You are not recognized.",
-      });
+      return res.status(401).json({ error: "No matching face found. You are not recognized." });
     }
 
     const userRows = await q(
@@ -280,32 +218,23 @@ router.post("/face-login", async (req, res) => {
 
     if (!user) {
       return res.status(404).json({
-        error:
-          "Face recognized but no linked login account. Please contact admin.",
+        error: "Face recognized but no linked login account. Please contact admin.",
       });
     }
 
-    // 🔒 Check lockout
     if (user.locked_until && new Date(user.locked_until) > new Date()) {
-      const secsLeft = Math.ceil(
-        (new Date(user.locked_until) - new Date()) / 1000
-      );
-      const durationText = formatDuration(secsLeft);
+      const secsLeft = Math.ceil((new Date(user.locked_until) - new Date()) / 1000);
       return res.status(403).json({
-        error: `Too many login attempts. Try again in ${durationText}.`,
+        error: `Too many login attempts. Try again in ${formatDuration(secsLeft)}.`,
         locked_until: user.locked_until,
         seconds_left: secsLeft,
       });
     }
 
-    // 🔒 Check status
     if (user.status !== "active") {
-      return res
-        .status(403)
-        .json({ error: "This account is suspended or inactive." });
+      return res.status(403).json({ error: "This account is suspended or inactive." });
     }
 
-    // 🔒 MFA check
     if (user.mfa_enabled) {
       return res.json(buildMfaRequiredResponse(user));
     }
@@ -317,43 +246,30 @@ router.post("/face-login", async (req, res) => {
   }
 });
 
-// ============================================================
-// POST /api/auth/verify-mfa
-// ============================================================
 router.post("/verify-mfa", async (req, res) => {
   try {
     const parsed = verifyMfaSchema.safeParse(req.body);
-    if (!parsed.success) {
-      return validationError(res, getZodError(parsed));
-    }
+    if (!parsed.success) return validationError(res, getZodError(parsed));
     const { temp_token, token } = parsed.data;
 
-    // 🔒 Verify temp token
     let decoded;
     try {
       decoded = jwt.verify(temp_token, process.env.JWT_SECRET);
     } catch {
-      return res.status(401).json({
-        error: "Invalid or expired temp token. Please log in again.",
-      });
+      return res.status(401).json({ error: "Invalid or expired temp token. Please log in again." });
     }
 
     if (!decoded.mfa_pending) {
       return res.status(401).json({ error: "Invalid temp token." });
     }
 
-    const rows = await q("SELECT * FROM users WHERE id = :id LIMIT 1", {
-      id: decoded.id,
-    });
+    const rows = await q("SELECT * FROM users WHERE id = :id LIMIT 1", { id: decoded.id });
     const user = rows[0];
 
     if (!user || !user.mfa_enabled || !user.mfa_secret) {
-      return res
-        .status(400)
-        .json({ error: "MFA is not enabled for this account." });
+      return res.status(400).json({ error: "MFA is not enabled for this account." });
     }
 
-    // 🔒 Verify TOTP
     const isValidTotp = speakeasy.totp.verify({
       secret: user.mfa_secret,
       encoding: "base32",
@@ -361,7 +277,6 @@ router.post("/verify-mfa", async (req, res) => {
       window: 1,
     });
 
-    // 🔒 Verify backup code (kung hindi valid ang TOTP)
     let isValidBackup = false;
     if (!isValidTotp && user.mfa_backup_codes) {
       try {
@@ -369,11 +284,11 @@ router.post("/verify-mfa", async (req, res) => {
         const idx = codes.indexOf(String(token).trim().toUpperCase());
         if (idx !== -1) {
           isValidBackup = true;
-          codes.splice(idx, 1); // One-time use
-          await q(
-            "UPDATE users SET mfa_backup_codes = :codes WHERE id = :id",
-            { codes: JSON.stringify(codes), id: user.id }
-          );
+          codes.splice(idx, 1);
+          await q("UPDATE users SET mfa_backup_codes = :codes WHERE id = :id", {
+            codes: JSON.stringify(codes),
+            id: user.id,
+          });
         }
       } catch (parseErr) {
         console.error("❌ Backup code parse error:", parseErr);
@@ -391,9 +306,6 @@ router.post("/verify-mfa", async (req, res) => {
   }
 });
 
-// ============================================================
-// GET /api/auth/me
-// ============================================================
 router.get("/me", requireAuth, async (req, res) => {
   try {
     return res.json(req.user);
@@ -402,9 +314,6 @@ router.get("/me", requireAuth, async (req, res) => {
   }
 });
 
-// ============================================================
-// POST /api/auth/logout
-// ============================================================
 router.post("/logout", requireAuth, async (req, res) => {
   try {
     await q(
