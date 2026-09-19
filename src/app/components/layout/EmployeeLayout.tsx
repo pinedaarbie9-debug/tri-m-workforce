@@ -1,3 +1,4 @@
+// src/app/components/layout/EmployeeLayout.tsx
 import { useState, useEffect } from "react";
 import { Outlet, useLocation } from "react-router";
 import { EmployeeSidebar } from "./EmployeeSidebar";
@@ -8,10 +9,12 @@ export function EmployeeLayout() {
   const [mobileOpen, setMobileOpen] = useState(false);
   const location = useLocation();
 
+  // 🔒 Auto-close mobile drawer kapag nag-navigate
   useEffect(() => {
     setMobileOpen(false);
   }, [location.pathname]);
 
+  // 🔒 Close mobile drawer sa Escape key
   useEffect(() => {
     if (!mobileOpen) return;
     const onKey = (e: KeyboardEvent) => {
@@ -23,6 +26,7 @@ export function EmployeeLayout() {
 
   return (
     <div className="flex h-screen overflow-hidden bg-background">
+      {/* 🔒 Accessibility: Skip to main content */}
       <a
         href="#main-content"
         className="sr-only focus:not-sr-only focus:absolute focus:top-2 focus:left-2 focus:z-50 focus:px-4 focus:py-2 focus:bg-primary focus:text-white focus:rounded-lg"
@@ -30,6 +34,7 @@ export function EmployeeLayout() {
         Skip to main content
       </a>
 
+      {/* 🔒 Desktop sidebar */}
       <div className="hidden lg:flex">
         <EmployeeSidebar
           collapsed={collapsed}
@@ -37,6 +42,7 @@ export function EmployeeLayout() {
         />
       </div>
 
+      {/* 🔒 Mobile drawer */}
       {mobileOpen && (
         <>
           <div
@@ -58,6 +64,7 @@ export function EmployeeLayout() {
         </>
       )}
 
+      {/* 🔒 Main content */}
       <div className="flex flex-col flex-1 overflow-hidden min-w-0">
         <TopBar onMenuClick={() => setMobileOpen(true)} />
         <main

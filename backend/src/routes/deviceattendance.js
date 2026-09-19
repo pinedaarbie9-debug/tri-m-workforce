@@ -1,3 +1,4 @@
+// backend/src/routes/deviceattendance.js
 import { Router } from "express";
 import express from "express";
 import crypto from "node:crypto";
@@ -8,14 +9,13 @@ const router = Router();
 
 // =============================================================================
 // ADMS / iClock PUSH PROTOCOL
-// (parehong paliwanag gaya ng dati)
 // =============================================================================
 router.use(express.text({ type: "*/*", limit: "2mb" }));
 
 const DEVICE_SHARED_SECRET = process.env.DEVICE_SHARED_SECRET || null;
 
 function isAuthorizedDevice(req) {
-  if (!DEVICE_SHARED_SECRET) return true;
+  if (!DEVICE_SHARED_SECRET) return true; // dev mode only
   const provided = req.headers["x-device-key"] || req.query.key;
   return provided === DEVICE_SHARED_SECRET;
 }
@@ -51,7 +51,10 @@ async function resolveEmployeeIdFromPin(pin) {
 }
 
 async function processPunch(employee_id, dateStr, timeStr, deviceSN, method) {
-  const settings = await getSettings(["late_threshold_minutes", "overtime_threshold_hours"]);
+  const settings = await getSettings([
+    "late_threshold_minutes",
+    "overtime_threshold_hours",
+  ]);
 
   const shiftRows = await q(
     `SELECT s.start_time FROM employee_shifts es JOIN shifts s ON s.id = es.shift_id
@@ -65,14 +68,6 @@ async function processPunch(employee_id, dateStr, timeStr, deviceSN, method) {
     { employee_id, dateStr }
   );
 
-  // FIX: kunin ang PINAKAHULING log ng araw na ito para malaman kung ano ang
-  // dapat na SUSUNOD na uri ng punch — hindi lang base sa check_in/check_out
-  // columns (na isang beses lang nagagamit kada araw sa summary row), kundi
-  // sa aktwal na huling naitalang log sa attendance_logs. Dati, pagkatapos
-  // malagyan ng parehong check_in AT check_out ang araw, anumang susunod na
-  // punch ay laging babagsak sa "else" branch at magla-log lang ng
-  // "check_in" nang paulit-ulit nang walang totoong pag-toggle — ito yung
-  // dahilan kung bakit "Checked In" nang "Checked In" nang paulit-ulit.
   const lastLogRows = await q(
     `SELECT type FROM attendance_logs
      WHERE employee_id = :employee_id AND DATE(timestamp) = :dateStr
@@ -81,35 +76,32 @@ async function processPunch(employee_id, dateStr, timeStr, deviceSN, method) {
   );
   const lastType = lastLogRows[0]?.type ?? null;
 
-  // Wastong pag-toggle: kung wala pang log ngayong araw O "check_out" ang
-  // huling log, ang susunod ay "check_in". Kung "check_in" ang huling log,
-  // ang susunod ay "check_out". Ganito, gaano man karaming beses mag-punch
-  // sa isang araw (hal. paglabas/pagbalik sa break), tama pa rin ang pag-alternate.
-  const logType = !lastType || lastType === "check_out" ? "check_in" : "check_out";
+  const logType =
+    !lastType || lastType === "check_out" ? "check_in" : "check_out";
 
   if (logType === "check_in") {
     if (!existing[0]) {
-      // Unang check-in ng araw — gumawa ng bagong attendance summary row.
       let status = "present";
       if (shiftStart) {
         const lateThreshold = settings.late_threshold_minutes ?? 15;
-        if (timeToMinutes(timeStr) > timeToMinutes(shiftStart) + lateThreshold) status = "late";
+        if (
+          timeToMinutes(timeStr) >
+          timeToMinutes(shiftStart) + lateThreshold
+        )
+          status = "late";
       }
       await q(
         `INSERT INTO attendance (id, employee_id, date, check_in, status) VALUES (:id, :employee_id, :dateStr, :t, :status)`,
-        { id: crypto.randomUUID(), employee_id, dateStr, t: timeStr, status }
+        {
+          id: crypto.randomUUID(),
+          employee_id,
+          dateStr,
+          t: timeStr,
+          status,
+        }
       );
     }
-    // FIX: kung may existing row na (ibig sabihin bumalik lang siya mula sa
-    // isang naunang check-out ngayong araw din — hal. galing sa break),
-    // hindi na natin babaguhin ang orihinal na "check_in" ng araw. Nananatili
-    // itong "unang pagpasok", habang ang bagong log lang ang magmamarka na
-    // bumalik siya. Kung gusto mo talagang i-extend/i-reset ang check_out
-    // tuwing bumabalik siya, sabihin mo lang para maidagdag natin.
   } else {
-    // check_out — i-update ang buod ng araw at i-recompute ang work hours
-    // base sa orihinal na check_in (o sa oras mismo ng punch na ito kung
-    // sa kahit anong dahilan ay walang existing row pa).
     const referenceCheckIn = existing[0]?.check_in ?? timeStr;
     const inMinutes = timeToMinutes(referenceCheckIn);
     const outMinutes = timeToMinutes(timeStr);
@@ -120,12 +112,14 @@ async function processPunch(employee_id, dateStr, timeStr, deviceSN, method) {
     if (existing[0]) {
       await q(
         "UPDATE attendance SET check_out = :t, work_hours = :wh, overtime_hours = :oh WHERE id = :id",
-        { t: timeStr, wh: workHours.toFixed(2), oh: overtimeHours.toFixed(2), id: existing[0].id }
+        {
+          t: timeStr,
+          wh: workHours.toFixed(2),
+          oh: overtimeHours.toFixed(2),
+          id: existing[0].id,
+        }
       );
     } else {
-      // Malabong mangyari (check-out bago pa man magkaroon ng check-in row),
-      // pero sakaling mangyari, gumawa pa rin tayo ng row para hindi mawala
-      // ang datos.
       await q(
         `INSERT INTO attendance (id, employee_id, date, check_out, work_hours, overtime_hours, status)
          VALUES (:id, :employee_id, :dateStr, :t, :wh, :oh, 'present')`,
@@ -206,7 +200,7 @@ router.post("/cdata", async (req, res) => {
       .split("\n")
       .map((l) => l.trim())
       .filter(Boolean)
-      .slice(0, 1000); // safety cap laban sa napakalaking push
+      .slice(0, 1000);
 
     let processed = 0;
     for (const line of lines) {
@@ -217,20 +211,31 @@ router.post("/cdata", async (req, res) => {
 
       const { employee_id, method } = await resolveEmployeeIdFromPin(pin);
       if (!employee_id) {
-        console.warn(`⚠️  Walang empleyadong naka-link sa PIN/Employee Code "${pin}" (SN=${SN}). I-check ang Biometric Auth enrollment o Employee Code.`);
+        console.warn(
+          `⚠️  No employee linked to PIN/Employee Code "${pin}" (SN=${SN}).`
+        );
         continue;
       }
 
       const [dateStr, timeStr] = timestamp.split(" ");
-      const logType = await processPunch(employee_id, dateStr, timeStr, SN, method);
-      console.log(`✅ ${logType.toUpperCase()} na-log para sa employee_id=${employee_id} (PIN/Code "${pin}", method=${method})`);
+      const logType = await processPunch(
+        employee_id,
+        dateStr,
+        timeStr,
+        SN,
+        method
+      );
+      console.log(
+        `✅ ${logType.toUpperCase()} logged for employee_id=${employee_id} (PIN/Code "${pin}", method=${method})`
+      );
       processed++;
     }
 
-    res.type("text/plain").send(`OK: ${processed}`);
+    return res.type("text/plain").send(`OK: ${processed}`);
   } catch (err) {
     console.error("POST /iclock/cdata (ATTLOG) error:", err);
-    res.type("text/plain").send("OK");
+    // Huwag i-leak ang error details sa device
+    return res.type("text/plain").send("OK");
   }
 });
 

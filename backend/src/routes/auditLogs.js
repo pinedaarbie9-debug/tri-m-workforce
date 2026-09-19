@@ -1,19 +1,16 @@
+// backend/src/routes/auditLogs.js
 import { Router } from "express";
 import { q } from "../db.js";
-import { requireAuth } from "../middleware/auth.js";
+import { requireAuth, requireRole } from "../middleware/auth.js";
+import { safeParseJSON } from "../utils/helpers.js";
+import { safeError } from "../utils/errorResponse.js";
+import { ROLE_GROUPS } from "../utils/roles.js";
 
 const router = Router();
 router.use(requireAuth);
 
-function safeParseJSON(value) {
-  if (value == null) return null;
-  if (typeof value === "object") return value;
-  try {
-    return JSON.parse(value);
-  } catch {
-    return null;
-  }
-}
+// 🔒 Admin only
+router.use(requireRole(...ROLE_GROUPS.ADMIN_ONLY));
 
 router.get("/", async (req, res) => {
   try {
@@ -34,10 +31,9 @@ router.get("/", async (req, res) => {
       new_values: safeParseJSON(r.new_values),
     }));
 
-    res.json(parsed);
+    return res.json(parsed);
   } catch (err) {
-    console.error("GET /audit-logs error:", err);
-    res.status(500).json({ error: err.sqlMessage ?? err.message ?? "Failed to fetch audit logs" });
+    return safeError(res, err, "Failed to fetch audit logs.");
   }
 });
 

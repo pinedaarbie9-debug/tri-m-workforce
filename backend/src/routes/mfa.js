@@ -5,11 +5,17 @@ import QRCode from "qrcode";
 import crypto from "node:crypto";
 import { q } from "../db.js";
 import { requireAuth } from "../middleware/auth.js";
+import { getZodError } from "../utils/helpers.js";
 import { logAudit } from "../utils/auditlog.js";
+import { safeError, validationError } from "../utils/errorResponse.js";
+import { mfaTokenSchema } from "../validators/businessValidator.js";
 
 const router = Router();
 router.use(requireAuth);
 
+// ============================================================
+// POST /mfa/setup
+// ============================================================
 router.post("/setup", async (req, res) => {
   try {
     const userId = req.user.id;
@@ -26,28 +32,31 @@ router.post("/setup", async (req, res) => {
 
     const qrDataUrl = await QRCode.toDataURL(secret.otpauth_url);
 
-    res.json({
+    return res.json({
       secret: secret.base32,
       qr_code: qrDataUrl,
       otpauth_url: secret.otpauth_url,
     });
   } catch (err) {
-    console.error("POST /mfa/setup error:", err);
-    res.status(500).json({ error: err.sqlMessage ?? err.message ?? "MFA setup failed" });
+    return safeError(res, err, "MFA setup failed.");
   }
 });
 
+// ============================================================
+// POST /mfa/verify-setup
+// ============================================================
 router.post("/verify-setup", async (req, res) => {
   try {
-    const { token } = req.body;
-    if (!token) {
-      return res.status(400).json({ error: "Verification code is required." });
-    }
+    const parsed = mfaTokenSchema.safeParse(req.body);
+    if (!parsed.success) return validationError(res, getZodError(parsed));
+    const { token } = parsed.data;
 
-    const rows = await q("SELECT mfa_secret FROM users WHERE id = :id", { id: req.user.id });
+    const rows = await q("SELECT mfa_secret FROM users WHERE id = :id", {
+      id: req.user.id,
+    });
     const user = rows[0];
     if (!user?.mfa_secret) {
-      return res.status(400).json({ error: "No MFA setup in progress." });
+      return validationError(res, "No MFA setup in progress.");
     }
 
     const verified = speakeasy.totp.verify({
@@ -77,19 +86,20 @@ router.post("/verify-setup", async (req, res) => {
       ip: req.ip,
     });
 
-    res.json({ ok: true, backup_codes: backupCodes });
+    return res.json({ ok: true, backup_codes: backupCodes });
   } catch (err) {
-    console.error("POST /mfa/verify-setup error:", err);
-    res.status(500).json({ error: err.sqlMessage ?? err.message ?? "MFA verification failed" });
+    return safeError(res, err, "MFA verification failed.");
   }
 });
 
+// ============================================================
+// POST /mfa/disable
+// ============================================================
 router.post("/disable", async (req, res) => {
   try {
-    const { token } = req.body;
-    if (!token) {
-      return res.status(400).json({ error: "Verification code is required." });
-    }
+    const parsed = mfaTokenSchema.safeParse(req.body);
+    if (!parsed.success) return validationError(res, getZodError(parsed));
+    const { token } = parsed.data;
 
     const rows = await q(
       "SELECT mfa_secret, mfa_backup_codes FROM users WHERE id = :id",
@@ -97,7 +107,7 @@ router.post("/disable", async (req, res) => {
     );
     const user = rows[0];
     if (!user?.mfa_secret) {
-      return res.status(400).json({ error: "MFA is not enabled." });
+      return validationError(res, "MFA is not enabled.");
     }
 
     const isValidTotp = speakeasy.totp.verify({
@@ -139,19 +149,23 @@ router.post("/disable", async (req, res) => {
       ip: req.ip,
     });
 
-    res.json({ ok: true });
+    return res.json({ ok: true });
   } catch (err) {
-    console.error("POST /mfa/disable error:", err);
-    res.status(500).json({ error: err.sqlMessage ?? err.message ?? "Failed to disable MFA" });
+    return safeError(res, err, "Failed to disable MFA.");
   }
 });
 
+// ============================================================
+// GET /mfa/status
+// ============================================================
 router.get("/status", async (req, res) => {
   try {
-    const rows = await q("SELECT mfa_enabled FROM users WHERE id = :id", { id: req.user.id });
-    res.json({ mfa_enabled: !!rows[0]?.mfa_enabled });
+    const rows = await q("SELECT mfa_enabled FROM users WHERE id = :id", {
+      id: req.user.id,
+    });
+    return res.json({ mfa_enabled: !!rows[0]?.mfa_enabled });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    return safeError(res, err, "Failed to fetch MFA status.");
   }
 });
 

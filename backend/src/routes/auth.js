@@ -1,21 +1,81 @@
+// backend/src/routes/auth.js
 import { Router } from "express";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import speakeasy from "speakeasy";
 import { q } from "../db.js";
 import { requireAuth } from "../middleware/auth.js";
+import { safeError, validationError } from "../utils/errorResponse.js";
+import {
+  loginSchema,
+  faceLoginSchema,
+  verifyMfaSchema,
+} from "../validators/authValidator.js";
 
 const router = Router();
 
-const MAX_ATTEMPTS = 5;
-const LOCKOUT_SECONDS = 60;
+// ============================================================
+// 🔒 GRADUATED LOCKOUT SYSTEM
+// ============================================================
+// Attempts 1-6:   Generic error lang (walang clue)
+// Attempts 7-9:   Lockout 1 minute
+// Attempts 10+:   Lockout 5 minutes (mananatili dito kahit tumaas pa)
+// ============================================================
+const LOCKOUT_TIERS = [
+  { threshold: 10, lockoutSeconds: 300 }, // 5 minutes
+  { threshold: 7,  lockoutSeconds: 60  }, // 1 minute
+];
 
+const FIRST_LOCKOUT_THRESHOLD = 7;
+const DEFAULT_LOCKOUT_SECONDS = 60;
+
+const JWT_EXPIRES_IN = "1d";
+const FACE_THRESHOLD = 0.6;
+
+// ============================================================
+// 🔒 Helper: Hanapin ang tamang lockout duration
+// ============================================================
+function getLockoutSeconds(attempts) {
+  for (const tier of LOCKOUT_TIERS) {
+    if (attempts >= tier.threshold) {
+      return tier.lockoutSeconds;
+    }
+  }
+  return DEFAULT_LOCKOUT_SECONDS;
+}
+
+// ============================================================
+// 🔒 Helper: I-format ang duration (seconds → "1 minute")
+// ============================================================
+function formatDuration(seconds) {
+  if (seconds < 60) return `${seconds} seconds`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes} minute${minutes > 1 ? "s" : ""}`;
+  const hours = Math.floor(minutes / 60);
+  return `${hours} hour${hours > 1 ? "s" : ""}`;
+}
+
+// ============================================================
+// 🔒 Helper: Zod v3 + v4 compatible error extractor
+// ============================================================
+function getZodError(parsed) {
+  const issues =
+    parsed?.error?.issues ?? parsed?.error?.errors ?? [];
+  return issues[0]?.message ?? "Invalid input.";
+}
+
+// ============================================================
+// Helper: Euclidean distance para sa face matching
+// ============================================================
 function euclideanDistance(a, b) {
   let sum = 0;
   for (let i = 0; i < a.length; i++) sum += (a[i] - b[i]) ** 2;
   return Math.sqrt(sum);
 }
 
+// ============================================================
+// Helper: Gumawa ng session at i-log sa audit_logs
+// ============================================================
 async function issueSession(user, req) {
   await q(
     "UPDATE users SET last_login = NOW(), failed_login_attempts = 0, locked_until = NULL WHERE id = :id",
@@ -31,7 +91,7 @@ async function issueSession(user, req) {
       employee_id: user.employee_id ?? null,
     },
     process.env.JWT_SECRET,
-    { expiresIn: "7d" }
+    { expiresIn: JWT_EXPIRES_IN }
   );
 
   await q(
@@ -51,22 +111,33 @@ async function issueSession(user, req) {
   };
 }
 
+// ============================================================
+// 🔒 Helper: I-track ang failed login attempts (GRADUATED)
+// ============================================================
 async function registerFailedAttempt(user) {
   const attempts = (user.failed_login_attempts ?? 0) + 1;
-  if (attempts >= MAX_ATTEMPTS) {
+  const lockoutSeconds = getLockoutSeconds(attempts);
+
+  // Kung umabot sa 7+ attempts, i-lock ang account
+  if (attempts >= FIRST_LOCKOUT_THRESHOLD) {
     await q(
       "UPDATE users SET failed_login_attempts = :attempts, locked_until = DATE_ADD(NOW(), INTERVAL :secs SECOND) WHERE id = :id",
-      { attempts, secs: LOCKOUT_SECONDS, id: user.id }
+      { attempts, secs: lockoutSeconds, id: user.id }
     );
-    return true;
+    return { locked: true, attempts, lockoutSeconds };
   }
+
+  // Kung hindi pa, i-increment lang ang counter
   await q(
     "UPDATE users SET failed_login_attempts = :attempts WHERE id = :id",
     { attempts, id: user.id }
   );
-  return false;
+  return { locked: false, attempts, lockoutSeconds: 0 };
 }
 
+// ============================================================
+// Helper: MFA required response (may temp token)
+// ============================================================
 function buildMfaRequiredResponse(user) {
   const tempToken = jwt.sign(
     { id: user.id, mfa_pending: true },
@@ -80,68 +151,96 @@ function buildMfaRequiredResponse(user) {
   };
 }
 
+// ============================================================
+// POST /api/auth/login
+// ============================================================
 router.post("/login", async (req, res) => {
   try {
-    const { email, password } = req.body;
-    if (!email || !password) {
-      return res.status(400).json({ error: "Email and password are required." });
+    const parsed = loginSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return validationError(res, getZodError(parsed));
+    }
+    const { email, password } = parsed.data;
+
+    const rows = await q(
+      "SELECT * FROM users WHERE email = :email LIMIT 1",
+      { email }
+    );
+    const user = rows[0];
+
+    // 🔒 Generic error — hindi nag-e-enumerate ng valid emails
+    if (!user) {
+      return res.status(401).json({ error: "Invalid email or password." });
     }
 
-    const rows = await q("SELECT * FROM users WHERE email = :email LIMIT 1", { email });
-    const user = rows[0];
-    if (!user) return res.status(401).json({ error: "Invalid email or password." });
-
+    // 🔒 Check lockout (still locked)
     if (user.locked_until && new Date(user.locked_until) > new Date()) {
-      const secsLeft = Math.ceil((new Date(user.locked_until) - new Date()) / 1000);
+      const secsLeft = Math.ceil(
+        (new Date(user.locked_until) - new Date()) / 1000
+      );
+      const durationText = formatDuration(secsLeft);
       return res.status(403).json({
-        error: `Account is locked. Please try again in ${secsLeft} seconds.`,
+        error: `Too many login attempts. Try again in ${durationText}.`,
         locked_until: user.locked_until,
         seconds_left: secsLeft,
       });
     }
 
+    // 🔒 Verify password
     const valid = await bcrypt.compare(password, user.password_hash);
     if (!valid) {
-      const nowLocked = await registerFailedAttempt(user);
-      if (nowLocked) {
+      const result = await registerFailedAttempt(user);
+
+      if (result.locked) {
+        const durationText = formatDuration(result.lockoutSeconds);
         return res.status(401).json({
-          error: `Account locked due to ${MAX_ATTEMPTS} failed attempts. Try again in ${LOCKOUT_SECONDS} seconds.`,
-          locked_until: new Date(Date.now() + LOCKOUT_SECONDS * 1000).toISOString(),
-          seconds_left: LOCKOUT_SECONDS,
+          error: `Too many login attempts. Try again in ${durationText}.`,
+          locked_until: new Date(
+            Date.now() + result.lockoutSeconds * 1000
+          ).toISOString(),
+          seconds_left: result.lockoutSeconds,
         });
       }
+
+      // 🔒 Generic error — walang "attempts remaining" warning
       return res.status(401).json({ error: "Invalid email or password." });
     }
 
+    // 🔒 Check status
     if (user.status !== "active") {
-      return res.status(403).json({ error: "This account is suspended or inactive." });
+      return res
+        .status(403)
+        .json({ error: "This account is suspended or inactive." });
     }
 
+    // 🔒 MFA check
     if (user.mfa_enabled) {
       return res.json(buildMfaRequiredResponse(user));
     }
 
     const session = await issueSession(user, req);
-    res.json(session);
+    return res.json(session);
   } catch (err) {
-    console.error("POST /auth/login error:", err);
-    res.status(500).json({ error: err.sqlMessage ?? err.message ?? "Login failed" });
+    return safeError(res, err, "Login failed.");
   }
 });
 
+// ============================================================
+// POST /api/auth/face-login
+// ============================================================
 router.post("/face-login", async (req, res) => {
   try {
-    const { face_descriptor } = req.body;
-    if (!Array.isArray(face_descriptor) || face_descriptor.length === 0) {
-      return res.status(400).json({ error: "Face descriptor is required." });
+    const parsed = faceLoginSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return validationError(res, getZodError(parsed));
     }
+    const { face_descriptor } = parsed.data;
 
     const credentials = await q(
       `SELECT employee_id, face_descriptor FROM biometric_credentials
        WHERE device_type = 'face_id' AND is_active = TRUE AND face_descriptor IS NOT NULL`
     );
 
-    const THRESHOLD = 0.6;
     let bestEmployeeId = null;
     let bestDistance = Infinity;
 
@@ -152,7 +251,14 @@ router.post("/face-login", async (req, res) => {
       } catch {
         continue;
       }
-      if (!Array.isArray(stored) || stored.length !== face_descriptor.length) continue;
+
+      if (
+        !Array.isArray(stored) ||
+        stored.length !== face_descriptor.length
+      ) {
+        continue;
+      }
+
       const dist = euclideanDistance(stored, face_descriptor);
       if (dist < bestDistance) {
         bestDistance = dist;
@@ -160,8 +266,10 @@ router.post("/face-login", async (req, res) => {
       }
     }
 
-    if (!bestEmployeeId || bestDistance > THRESHOLD) {
-      return res.status(401).json({ error: "No matching face found. You are not recognized." });
+    if (!bestEmployeeId || bestDistance > FACE_THRESHOLD) {
+      return res.status(401).json({
+        error: "No matching face found. You are not recognized.",
+      });
     }
 
     const userRows = await q(
@@ -169,62 +277,83 @@ router.post("/face-login", async (req, res) => {
       { employee_id: bestEmployeeId }
     );
     const user = userRows[0];
+
     if (!user) {
       return res.status(404).json({
-        error: "Face recognized but no linked login account. Please contact admin.",
+        error:
+          "Face recognized but no linked login account. Please contact admin.",
       });
     }
 
+    // 🔒 Check lockout
     if (user.locked_until && new Date(user.locked_until) > new Date()) {
-      const secsLeft = Math.ceil((new Date(user.locked_until) - new Date()) / 1000);
+      const secsLeft = Math.ceil(
+        (new Date(user.locked_until) - new Date()) / 1000
+      );
+      const durationText = formatDuration(secsLeft);
       return res.status(403).json({
-        error: `Account is locked. Please try again in ${secsLeft} seconds.`,
+        error: `Too many login attempts. Try again in ${durationText}.`,
         locked_until: user.locked_until,
         seconds_left: secsLeft,
       });
     }
 
+    // 🔒 Check status
     if (user.status !== "active") {
-      return res.status(403).json({ error: "This account is suspended or inactive." });
+      return res
+        .status(403)
+        .json({ error: "This account is suspended or inactive." });
     }
 
+    // 🔒 MFA check
     if (user.mfa_enabled) {
       return res.json(buildMfaRequiredResponse(user));
     }
 
     const session = await issueSession(user, req);
-    res.json(session);
+    return res.json(session);
   } catch (err) {
-    console.error("POST /auth/face-login error:", err);
-    res.status(500).json({ error: err.sqlMessage ?? err.message ?? "Face login failed" });
+    return safeError(res, err, "Face login failed.");
   }
 });
 
-// ✅ MFA verification step (after login)
+// ============================================================
+// POST /api/auth/verify-mfa
+// ============================================================
 router.post("/verify-mfa", async (req, res) => {
   try {
-    const { temp_token, token } = req.body;
-    if (!temp_token || !token) {
-      return res.status(400).json({ error: "Temp token and verification code are required." });
+    const parsed = verifyMfaSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return validationError(res, getZodError(parsed));
     }
+    const { temp_token, token } = parsed.data;
 
+    // 🔒 Verify temp token
     let decoded;
     try {
       decoded = jwt.verify(temp_token, process.env.JWT_SECRET);
     } catch {
-      return res.status(401).json({ error: "Invalid or expired temp token. Please log in again." });
+      return res.status(401).json({
+        error: "Invalid or expired temp token. Please log in again.",
+      });
     }
 
     if (!decoded.mfa_pending) {
       return res.status(401).json({ error: "Invalid temp token." });
     }
 
-    const rows = await q("SELECT * FROM users WHERE id = :id LIMIT 1", { id: decoded.id });
+    const rows = await q("SELECT * FROM users WHERE id = :id LIMIT 1", {
+      id: decoded.id,
+    });
     const user = rows[0];
+
     if (!user || !user.mfa_enabled || !user.mfa_secret) {
-      return res.status(400).json({ error: "MFA is not enabled for this account." });
+      return res
+        .status(400)
+        .json({ error: "MFA is not enabled for this account." });
     }
 
+    // 🔒 Verify TOTP
     const isValidTotp = speakeasy.totp.verify({
       secret: user.mfa_secret,
       encoding: "base32",
@@ -232,6 +361,7 @@ router.post("/verify-mfa", async (req, res) => {
       window: 1,
     });
 
+    // 🔒 Verify backup code (kung hindi valid ang TOTP)
     let isValidBackup = false;
     if (!isValidTotp && user.mfa_backup_codes) {
       try {
@@ -239,13 +369,15 @@ router.post("/verify-mfa", async (req, res) => {
         const idx = codes.indexOf(String(token).trim().toUpperCase());
         if (idx !== -1) {
           isValidBackup = true;
-          codes.splice(idx, 1);
+          codes.splice(idx, 1); // One-time use
           await q(
             "UPDATE users SET mfa_backup_codes = :codes WHERE id = :id",
             { codes: JSON.stringify(codes), id: user.id }
           );
         }
-      } catch {}
+      } catch (parseErr) {
+        console.error("❌ Backup code parse error:", parseErr);
+      }
     }
 
     if (!isValidTotp && !isValidBackup) {
@@ -253,37 +385,35 @@ router.post("/verify-mfa", async (req, res) => {
     }
 
     const session = await issueSession(user, req);
-    res.json(session);
+    return res.json(session);
   } catch (err) {
-    console.error("POST /auth/verify-mfa error:", err);
-    res.status(500).json({ error: err.sqlMessage ?? err.message ?? "MFA verification failed" });
+    return safeError(res, err, "MFA verification failed.");
   }
 });
 
+// ============================================================
+// GET /api/auth/me
+// ============================================================
 router.get("/me", requireAuth, async (req, res) => {
   try {
-    const rows = await q(
-      "SELECT id, full_name, email, role, employee_id FROM users WHERE id = :id",
-      { id: req.user.id }
-    );
-    if (!rows[0]) return res.status(404).json({ error: "User not found" });
-    res.json(rows[0]);
+    return res.json(req.user);
   } catch (err) {
-    console.error("GET /auth/me error:", err);
-    res.status(500).json({ error: err.sqlMessage ?? err.message ?? "Failed to fetch user" });
+    return safeError(res, err, "Failed to fetch user.");
   }
 });
 
+// ============================================================
+// POST /api/auth/logout
+// ============================================================
 router.post("/logout", requireAuth, async (req, res) => {
   try {
     await q(
       "INSERT INTO audit_logs (user_id, action, module, ip_address) VALUES (:uid, 'logout', 'auth', :ip)",
       { uid: req.user.id, ip: req.ip }
     );
-    res.json({ ok: true });
+    return res.json({ ok: true });
   } catch (err) {
-    console.error("POST /auth/logout error:", err);
-    res.status(500).json({ error: err.sqlMessage ?? err.message ?? "Logout failed" });
+    return safeError(res, err, "Logout failed.");
   }
 });
 

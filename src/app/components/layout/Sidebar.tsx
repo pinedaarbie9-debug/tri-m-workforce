@@ -1,3 +1,4 @@
+// src/app/components/Sidebar.tsx
 import { NavLink, useLocation } from "react-router";
 import {
   LayoutDashboard,
@@ -28,6 +29,8 @@ interface NavItem {
   label: string;
   icon: React.ComponentType<{ className?: string }>;
   path: string;
+  // 🔒 Optional: override path base sa role
+  employeePath?: string;
 }
 
 interface NavGroup {
@@ -67,7 +70,12 @@ const NAV_GROUPS: NavGroup[] = [
   {
     title: "Administration",
     items: [
-      { label: "Notifications", icon: Bell, path: "/notifications" },
+      {
+        label: "Notifications",
+        icon: Bell,
+        path: "/notifications",
+        employeePath: "/portal/notifications", // 🔒 Employee-specific path
+      },
       { label: "User Management", icon: ShieldCheck, path: "/users" },
       { label: "Audit Logs", icon: ClipboardList, path: "/audit" },
       { label: "Settings", icon: Settings, path: "/settings" },
@@ -85,14 +93,25 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
   const { unreadCount } = useNotifications();
   const { user } = useAuth();
 
-  // BAGO: i-filter muna ang bawat group base sa role ng naka-login na user
-  // gamit ang canAccess() helper (mula sa config/permissions.ts). Kung
-  // maubos ang items ng isang group (walang natirang pwedeng makita ang
-  // role na ito), itinatago rin ang buong group title para hindi lumabas
-  // ang isang blangkong section header.
+  const isEmployee = user?.role === "employee";
+
+  // 🔒 I-filter ang bawat group base sa role ng naka-login
+  // At i-adjust ang path base sa role (employee vs management)
   const visibleGroups = NAV_GROUPS.map((group) => ({
     ...group,
-    items: group.items.filter((item) => canAccess(item.path, user?.role)),
+    items: group.items
+      .filter((item) => {
+        // Para sa employee, gamitin ang employeePath kung meron
+        const pathToCheck = isEmployee && item.employeePath
+          ? item.employeePath
+          : item.path;
+        return canAccess(pathToCheck, user?.role);
+      })
+      .map((item) => ({
+        ...item,
+        // 🔒 I-adjust ang actual path base sa role
+        path: isEmployee && item.employeePath ? item.employeePath : item.path,
+      })),
   })).filter((group) => group.items.length > 0);
 
   return (
@@ -119,15 +138,19 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
                 transition={{ duration: 0.15 }}
                 className="overflow-hidden"
               >
-                <p className="text-white font-semibold text-sm leading-tight whitespace-nowrap">Tri-M Global</p>
-                <p className="text-sidebar-foreground text-xs whitespace-nowrap">Logistics & Trading Inc.</p>
+                <p className="text-white font-semibold text-sm leading-tight whitespace-nowrap">
+                  Tri-M Global
+                </p>
+                <p className="text-sidebar-foreground text-xs whitespace-nowrap">
+                  Logistics & Trading Inc.
+                </p>
               </motion.div>
             )}
           </AnimatePresence>
         </div>
       </div>
 
-      {/* Navigation — gumagamit na ng visibleGroups sa halip na NAV_GROUPS */}
+      {/* Navigation */}
       <div className="flex-1 overflow-y-auto py-3 space-y-1 scrollbar-thin">
         {visibleGroups.map((group) => (
           <div key={group.title} className="mb-1">
@@ -144,10 +167,16 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
               )}
             </AnimatePresence>
             {group.items.map((item) => {
+              // 🔒 Check kung active base sa path (may special case for notifications)
               const isActive =
                 item.path === "/"
                   ? location.pathname === "/"
                   : location.pathname.startsWith(item.path);
+
+              // 🔒 Badge para sa notifications — i-check parehong admin at employee paths
+              const isNotificationItem =
+                item.path === "/notifications" ||
+                item.path === "/portal/notifications";
 
               return (
                 <NavLink key={item.path} to={item.path} className="block px-3">
@@ -166,7 +195,9 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
                     <item.icon
                       className={cn(
                         "shrink-0 w-4 h-4",
-                        isActive ? "text-sidebar-primary" : "text-sidebar-foreground/70 group-hover:text-white"
+                        isActive
+                          ? "text-sidebar-primary"
+                          : "text-sidebar-foreground/70 group-hover:text-white"
                       )}
                     />
                     <AnimatePresence initial={false}>
@@ -182,11 +213,13 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
                         </motion.span>
                       )}
                     </AnimatePresence>
-                    {!collapsed && item.path === "/notifications" && unreadCount > 0 && (
-                      <span className="bg-sidebar-primary text-white text-[10px] font-semibold px-1.5 py-0.5 rounded-full">
-                        {unreadCount}
-                      </span>
-                    )}
+                    {!collapsed &&
+                      isNotificationItem &&
+                      unreadCount > 0 && (
+                        <span className="bg-sidebar-primary text-white text-[10px] font-semibold px-1.5 py-0.5 rounded-full">
+                          {unreadCount}
+                        </span>
+                      )}
                   </div>
                 </NavLink>
               );
@@ -200,7 +233,11 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
         onClick={onToggle}
         className="absolute top-1/2 -right-3 w-6 h-6 rounded-full bg-sidebar-primary text-white flex items-center justify-center shadow-lg hover:scale-110 transition-transform z-10"
       >
-        {collapsed ? <ChevronRight className="w-3 h-3" /> : <ChevronLeft className="w-3 h-3" />}
+        {collapsed ? (
+          <ChevronRight className="w-3 h-3" />
+        ) : (
+          <ChevronLeft className="w-3 h-3" />
+        )}
       </button>
     </motion.aside>
   );

@@ -1,24 +1,20 @@
+// backend/src/routes/employees.js
 import { Router } from "express";
-import crypto from "node:crypto"; // FIX: missing import — sisira sana ang POST /employees dahil dito
+import crypto from "node:crypto";
 import { q } from "../db.js";
-import { requireAuth } from "../middleware/auth.js";
+import { requireAuth, requireRole } from "../middleware/auth.js";
+import { safeParseJSON, getZodError } from "../utils/helpers.js";
 import { logAudit } from "../utils/auditlog.js";
+import { safeError, validationError } from "../utils/errorResponse.js";
+import { ROLE_GROUPS } from "../utils/roles.js";
+import {
+  createEmployeeSchema,
+  updateEmployeeSchema,
+  updateSelfEmployeeSchema,
+} from "../validators/businessValidator.js";
 
 const router = Router();
 router.use(requireAuth);
-
-// FIX: safe parse — kung object na (bagong mysql2 auto-parses JSON columns),
-// ibalik na lang siya diretso. Kung string pa (lumang driver behavior), saka
-// lang natin i-JSON.parse. Iniiwasan nito yung "[object Object] is not valid JSON" crash.
-function safeParseJSON(value) {
-  if (value == null) return null;
-  if (typeof value === "object") return value;
-  try {
-    return JSON.parse(value);
-  } catch {
-    return null;
-  }
-}
 
 const SELECT_EMPLOYEE = `
   SELECT
@@ -31,254 +27,355 @@ const SELECT_EMPLOYEE = `
 `;
 
 // ============================================================
-// "/me" ROUTES — DAPAT NASA ITAAS BAGO ANG "/:id"!
+// /me routes — LAHAT ng roles (self-service)
 // ============================================================
-
 router.get("/me", async (req, res) => {
   try {
     if (!req.user.employee_id) {
-      return res.status(404).json({ error: "Walang naka-link na employee record sa account na ito." });
+      return res.status(404).json({ error: "No linked employee record." });
     }
-    const rows = await q(`${SELECT_EMPLOYEE} WHERE e.id = :id`, { id: req.user.employee_id });
-    if (!rows[0]) return res.status(404).json({ error: "Employee not found" });
-    res.json({ ...rows[0], department: safeParseJSON(rows[0].department) });
+    const rows = await q(`${SELECT_EMPLOYEE} WHERE e.id = :id`, {
+      id: req.user.employee_id,
+    });
+    if (!rows[0]) return res.status(404).json({ error: "Employee not found." });
+    return res.json({
+      ...rows[0],
+      department: safeParseJSON(rows[0].department),
+    });
   } catch (err) {
-    console.error("GET /employees/me error:", err);
-    res.status(500).json({ error: err.sqlMessage ?? err.message ?? "Failed to fetch profile" });
+    return safeError(res, err, "Failed to fetch profile.");
   }
 });
 
 router.patch("/me", async (req, res) => {
   try {
     if (!req.user.employee_id) {
-      return res.status(404).json({ error: "Walang naka-link na employee record sa account na ito." });
+      return res.status(404).json({ error: "No linked employee record." });
     }
-    const allowed = ["phone", "email"];
-    const updates = Object.keys(req.body).filter((k) => allowed.includes(k));
-    if (updates.length === 0) return res.status(400).json({ error: "Walang laman ang update." });
+    const parsed = updateSelfEmployeeSchema.safeParse(req.body);
+    if (!parsed.success) return validationError(res, getZodError(parsed));
 
-    const setClause = updates.map((k) => `${k} = :${k}`).join(", ");
-    await q(`UPDATE employees SET ${setClause} WHERE id = :id`, { ...req.body, id: req.user.employee_id });
-    res.json({ ok: true });
-  } catch (err) {
-    console.error("PATCH /employees/me error:", err);
-    res.status(500).json({ error: err.sqlMessage ?? err.message ?? "Failed to update profile" });
-  }
-});
-
-// ============================================================
-// TRASH ROUTES — DAPAT NASA ITAAS BAGO ANG "/:id"!
-// ============================================================
-
-router.get("/trash", async (req, res) => {
-  try {
-    const rows = await q(`
-      ${SELECT_EMPLOYEE}
-      WHERE e.deleted_at IS NOT NULL
-      ORDER BY e.deleted_at DESC
-    `);
-    const parsed = rows.map((r) => ({ ...r, department: safeParseJSON(r.department) }));
-    res.json(parsed);
-  } catch (err) {
-    console.error("GET /employees/trash error:", err);
-    res.status(500).json({ error: err.sqlMessage ?? err.message ?? "Failed to fetch deleted employees" });
-  }
-});
-
-router.post("/:id/restore", async (req, res) => {
-  try {
-    const existing = await q("SELECT id, full_name, deleted_at FROM employees WHERE id = :id", { id: req.params.id });
-    if (!existing[0]) return res.status(404).json({ error: "Employee not found" });
-    if (!existing[0].deleted_at) return res.status(400).json({ error: "Hindi naman na-delete ang employee na ito." });
-
-    await q("UPDATE employees SET deleted_at = NULL WHERE id = :id", { id: req.params.id });
-
-    // FIX: i-reactivate pabalik yung linked login account, kung hindi ma-a-stuck ito
-    // sa "inactive" kahit na-restore na yung employee profile.
-    await q("UPDATE users SET status = 'active' WHERE employee_id = :id", { id: req.params.id });
-
-    await logAudit({
-      userId: req.user.id,
-      action: "update",
-      module: "employees",
-      recordId: req.params.id,
-      newValues: { full_name: existing[0].full_name, status: "restored" },
-      ip: req.ip,
-    });
-
-    res.json({ ok: true });
-  } catch (err) {
-    console.error("POST /employees/:id/restore error:", err);
-    res.status(500).json({ error: err.sqlMessage ?? err.message ?? "Failed to restore employee" });
-  }
-});
-
-router.delete("/:id/permanent", async (req, res) => {
-  try {
-    const existing = await q(
-      "SELECT id, full_name, employee_code, deleted_at FROM employees WHERE id = :id",
-      { id: req.params.id }
-    );
-    if (!existing[0]) return res.status(404).json({ error: "Employee not found" });
-    if (!existing[0].deleted_at) {
-      return res.status(400).json({ error: "I-delete muna ang employee bago ito permanenteng burahin." });
+    const updates = parsed.data;
+    if (Object.keys(updates).length === 0) {
+      return validationError(res, "No updates provided.");
     }
 
-    await q("DELETE FROM employees WHERE id = :id", { id: req.params.id });
-
-    await logAudit({
-      userId: req.user.id,
-      action: "delete",
-      module: "employees",
-      recordId: req.params.id,
-      oldValues: { full_name: existing[0].full_name, employee_code: existing[0].employee_code },
-      ip: req.ip,
+    const setClause = Object.keys(updates)
+      .map((k) => `${k} = :${k}`)
+      .join(", ");
+    await q(`UPDATE employees SET ${setClause} WHERE id = :id`, {
+      ...updates,
+      id: req.user.employee_id,
     });
-
-    res.json({ ok: true });
+    return res.json({ ok: true });
   } catch (err) {
-    console.error("DELETE /employees/:id/permanent error:", err);
-    res.status(500).json({ error: err.sqlMessage ?? err.message ?? "Failed to permanently delete employee" });
+    return safeError(res, err, "Failed to update profile.");
   }
 });
 
 // ============================================================
-// Admin/management routes
+// Trash routes — Admin, HR, Supervisor
 // ============================================================
-
-router.get("/", async (req, res) => {
-  try {
-    const rows = await q(`${SELECT_EMPLOYEE} WHERE e.deleted_at IS NULL ORDER BY e.created_at DESC`);
-    const parsed = rows.map((r) => ({ ...r, department: safeParseJSON(r.department) }));
-    res.json(parsed);
-  } catch (err) {
-    console.error("GET /employees error:", err);
-    res.status(500).json({ error: err.sqlMessage ?? err.message ?? "Failed to fetch employees" });
+router.get(
+  "/trash",
+  requireRole(...ROLE_GROUPS.EMPLOYEE_MANAGERS),
+  async (req, res) => {
+    try {
+      const rows = await q(`
+        ${SELECT_EMPLOYEE}
+        WHERE e.deleted_at IS NOT NULL
+        ORDER BY e.deleted_at DESC
+      `);
+      const parsed = rows.map((r) => ({
+        ...r,
+        department: safeParseJSON(r.department),
+      }));
+      return res.json(parsed);
+    } catch (err) {
+      return safeError(res, err, "Failed to fetch deleted employees.");
+    }
   }
-});
+);
 
-router.get("/:id", async (req, res) => {
-  try {
-    const rows = await q(`${SELECT_EMPLOYEE} WHERE e.id = :id`, { id: req.params.id });
-    if (!rows[0]) return res.status(404).json({ error: "Employee not found" });
-    res.json({ ...rows[0], department: safeParseJSON(rows[0].department) });
-  } catch (err) {
-    console.error("GET /employees/:id error:", err);
-    res.status(500).json({ error: err.sqlMessage ?? err.message ?? "Failed to fetch employee" });
+router.post(
+  "/:id/restore",
+  requireRole(...ROLE_GROUPS.ADMIN_AND_HR),
+  async (req, res) => {
+    try {
+      const existing = await q(
+        "SELECT id, full_name, deleted_at FROM employees WHERE id = :id",
+        { id: req.params.id }
+      );
+      if (!existing[0])
+        return res.status(404).json({ error: "Employee not found." });
+      if (!existing[0].deleted_at) {
+        return validationError(res, "Employee is not deleted.");
+      }
+
+      await q("UPDATE employees SET deleted_at = NULL WHERE id = :id", {
+        id: req.params.id,
+      });
+      await q("UPDATE users SET status = 'active' WHERE employee_id = :id", {
+        id: req.params.id,
+      });
+
+      await logAudit({
+        userId: req.user.id,
+        action: "update",
+        module: "employees",
+        recordId: req.params.id,
+        newValues: { full_name: existing[0].full_name, status: "restored" },
+        ip: req.ip,
+      });
+
+      return res.json({ ok: true });
+    } catch (err) {
+      return safeError(res, err, "Failed to restore employee.");
+    }
   }
-});
+);
 
-router.post("/", async (req, res) => {
-  try {
-    const { first_name, last_name, email, phone, job_title, department_id, employment_type, status, hire_date } = req.body;
+router.delete(
+  "/:id/permanent",
+  requireRole(...ROLE_GROUPS.ADMIN_ONLY),
+  async (req, res) => {
+    try {
+      const existing = await q(
+        "SELECT id, full_name, employee_code, deleted_at FROM employees WHERE id = :id",
+        { id: req.params.id }
+      );
+      if (!existing[0])
+        return res.status(404).json({ error: "Employee not found." });
+      if (!existing[0].deleted_at) {
+        return validationError(
+          res,
+          "Delete the employee first before permanent removal."
+        );
+      }
 
-    const prefixRows = await q(`SELECT value FROM settings WHERE \`key\` = 'employee_id_prefix'`);
-    const prefix = prefixRows[0] ? safeParseJSON(prefixRows[0].value) ?? "EMP-" : "EMP-";
+      await q("DELETE FROM employees WHERE id = :id", { id: req.params.id });
 
-    const countRows = await q(`SELECT COUNT(*) AS count FROM employees WHERE employee_code LIKE :pattern`, {
-      pattern: `${prefix}%`,
-    });
-    const nextNumber = (countRows[0]?.count ?? 0) + 1;
-    const employee_code = `${prefix}${String(nextNumber).padStart(3, "0")}`;
+      await logAudit({
+        userId: req.user.id,
+        action: "delete",
+        module: "employees",
+        recordId: req.params.id,
+        oldValues: {
+          full_name: existing[0].full_name,
+          employee_code: existing[0].employee_code,
+        },
+        ip: req.ip,
+      });
 
-    const id = crypto.randomUUID();
-    const full_name = `${first_name} ${last_name}`.trim();
+      return res.json({ ok: true });
+    } catch (err) {
+      return safeError(res, err, "Failed to permanently delete employee.");
+    }
+  }
+);
 
-    await q(
-      `INSERT INTO employees (id, employee_code, first_name, last_name, full_name, email, phone, job_title, department_id, employment_type, status, hire_date)
-       VALUES (:id, :employee_code, :first_name, :last_name, :full_name, :email, :phone, :job_title, :department_id, :employment_type, :status, :hire_date)`,
-      {
-        id,
-        employee_code,
+// ============================================================
+// CRUD routes — Admin, HR, Supervisor
+// ============================================================
+router.get(
+  "/",
+  requireRole(...ROLE_GROUPS.EMPLOYEE_MANAGERS),
+  async (req, res) => {
+    try {
+      const rows = await q(
+        `${SELECT_EMPLOYEE} WHERE e.deleted_at IS NULL ORDER BY e.created_at DESC`
+      );
+      const parsed = rows.map((r) => ({
+        ...r,
+        department: safeParseJSON(r.department),
+      }));
+      return res.json(parsed);
+    } catch (err) {
+      return safeError(res, err, "Failed to fetch employees.");
+    }
+  }
+);
+
+router.get(
+  "/:id",
+  requireRole(...ROLE_GROUPS.EMPLOYEE_MANAGERS),
+  async (req, res) => {
+    try {
+      const rows = await q(`${SELECT_EMPLOYEE} WHERE e.id = :id`, {
+        id: req.params.id,
+      });
+      if (!rows[0])
+        return res.status(404).json({ error: "Employee not found." });
+      return res.json({
+        ...rows[0],
+        department: safeParseJSON(rows[0].department),
+      });
+    } catch (err) {
+      return safeError(res, err, "Failed to fetch employee.");
+    }
+  }
+);
+
+router.post(
+  "/",
+  requireRole(...ROLE_GROUPS.EMPLOYEE_MANAGERS),
+  async (req, res) => {
+    try {
+      const parsed = createEmployeeSchema.safeParse(req.body);
+      if (!parsed.success) return validationError(res, getZodError(parsed));
+
+      const {
         first_name,
         last_name,
-        full_name,
         email,
-        phone: phone ?? null,
-        job_title: job_title ?? null,
-        department_id: department_id || null,
-        employment_type: employment_type ?? "full_time",
-        status: status ?? "active",
-        hire_date: hire_date || null,
+        phone,
+        job_title,
+        department_id,
+        employment_type,
+        status,
+        hire_date,
+      } = parsed.data;
+
+      const prefixRows = await q(
+        "SELECT value FROM settings WHERE `key` = 'employee_id_prefix'"
+      );
+      const prefix = prefixRows[0]
+        ? safeParseJSON(prefixRows[0].value) ?? "EMP-"
+        : "EMP-";
+
+      const countRows = await q(
+        "SELECT COUNT(*) AS count FROM employees WHERE employee_code LIKE :pattern",
+        { pattern: `${prefix}%` }
+      );
+      const nextNumber = (countRows[0]?.count ?? 0) + 1;
+      const employee_code = `${prefix}${String(nextNumber).padStart(3, "0")}`;
+
+      const id = crypto.randomUUID();
+      const full_name = `${first_name} ${last_name}`.trim();
+
+      await q(
+        `INSERT INTO employees (id, employee_code, first_name, last_name, full_name, email, phone, job_title, department_id, employment_type, status, hire_date)
+         VALUES (:id, :employee_code, :first_name, :last_name, :full_name, :email, :phone, :job_title, :department_id, :employment_type, :status, :hire_date)`,
+        {
+          id,
+          employee_code,
+          first_name,
+          last_name,
+          full_name,
+          email,
+          phone: phone ?? null,
+          job_title: job_title ?? null,
+          department_id: department_id || null,
+          employment_type: employment_type ?? "full_time",
+          status: status ?? "active",
+          hire_date: hire_date || new Date().toISOString().slice(0, 10),
+        }
+      );
+
+      await logAudit({
+        userId: req.user.id,
+        action: "create",
+        module: "employees",
+        recordId: id,
+        newValues: { full_name, employee_code, job_title: job_title ?? null },
+        ip: req.ip,
+      });
+
+      return res.status(201).json({ id, employee_code });
+    } catch (err) {
+      return safeError(res, err, "Failed to create employee.");
+    }
+  }
+);
+
+router.patch(
+  "/:id",
+  requireRole(...ROLE_GROUPS.EMPLOYEE_MANAGERS),
+  async (req, res) => {
+    try {
+      const parsed = updateEmployeeSchema.safeParse(req.body);
+      if (!parsed.success) return validationError(res, getZodError(parsed));
+
+      const updates = parsed.data;
+      if (Object.keys(updates).length === 0) {
+        return validationError(res, "No updates provided.");
       }
-    );
 
-    await logAudit({
-      userId: req.user.id,
-      action: "create",
-      module: "employees",
-      recordId: id,
-      newValues: { full_name, employee_code, job_title: job_title ?? null },
-      ip: req.ip,
-    });
+      const before = await q("SELECT full_name FROM employees WHERE id = :id", {
+        id: req.params.id,
+      });
+      if (!before[0])
+        return res.status(404).json({ error: "Employee not found." });
 
-    res.status(201).json({ id, employee_code });
-  } catch (err) {
-    console.error("POST /employees error:", err);
-    res.status(500).json({ error: err.sqlMessage ?? err.message ?? "Failed to create employee" });
+      const setClause = Object.keys(updates)
+        .map((k) => `${k} = :${k}`)
+        .join(", ");
+      await q(`UPDATE employees SET ${setClause} WHERE id = :id`, {
+        ...updates,
+        id: req.params.id,
+      });
+
+      const after = await q("SELECT full_name FROM employees WHERE id = :id", {
+        id: req.params.id,
+      });
+
+      await logAudit({
+        userId: req.user.id,
+        action: "update",
+        module: "employees",
+        recordId: req.params.id,
+        oldValues: { full_name: before[0].full_name },
+        newValues: { full_name: after[0]?.full_name, ...updates },
+        ip: req.ip,
+      });
+
+      return res.json({ ok: true });
+    } catch (err) {
+      return safeError(res, err, "Failed to update employee.");
+    }
   }
-});
+);
 
-router.patch("/:id", async (req, res) => {
-  try {
-    const allowed = ["first_name", "last_name", "email", "phone", "job_title", "department_id", "employment_type", "status", "hire_date"];
-    const updates = Object.keys(req.body).filter((k) => allowed.includes(k));
-    if (updates.length === 0) return res.status(400).json({ error: "Walang laman ang update." });
+router.delete(
+  "/:id",
+  requireRole(...ROLE_GROUPS.ADMIN_AND_HR),
+  async (req, res) => {
+    try {
+      const existing = await q(
+        "SELECT id, full_name, employee_code FROM employees WHERE id = :id",
+        { id: req.params.id }
+      );
+      if (!existing[0])
+        return res.status(404).json({ error: "Employee not found." });
 
-    const before = await q("SELECT full_name FROM employees WHERE id = :id", { id: req.params.id });
-    if (!before[0]) return res.status(404).json({ error: "Employee not found" });
+      await q("UPDATE employees SET deleted_at = NOW() WHERE id = :id", {
+        id: req.params.id,
+      });
+      await q("UPDATE users SET status = 'inactive' WHERE employee_id = :id", {
+        id: req.params.id,
+      });
+      await q(
+        "UPDATE biometric_credentials SET is_active = FALSE WHERE employee_id = :id",
+        { id: req.params.id }
+      );
 
-    const setClause = updates.map((k) => `${k} = :${k}`).join(", ");
-    await q(`UPDATE employees SET ${setClause} WHERE id = :id`, { ...req.body, id: req.params.id });
+      await logAudit({
+        userId: req.user.id,
+        action: "delete",
+        module: "employees",
+        recordId: req.params.id,
+        oldValues: {
+          full_name: existing[0].full_name,
+          employee_code: existing[0].employee_code,
+        },
+        ip: req.ip,
+      });
 
-    const after = await q("SELECT full_name FROM employees WHERE id = :id", { id: req.params.id });
-
-    await logAudit({
-      userId: req.user.id,
-      action: "update",
-      module: "employees",
-      recordId: req.params.id,
-      oldValues: { full_name: before[0].full_name },
-      newValues: { full_name: after[0]?.full_name, ...req.body },
-      ip: req.ip,
-    });
-
-    res.json({ ok: true });
-  } catch (err) {
-    console.error("PATCH /employees/:id error:", err);
-    res.status(500).json({ error: err.sqlMessage ?? err.message ?? "Failed to update employee" });
+      return res.json({ ok: true });
+    } catch (err) {
+      return safeError(res, err, "Failed to delete employee.");
+    }
   }
-});
-
-router.delete("/:id", async (req, res) => {
-  try {
-    const existing = await q("SELECT id, full_name, employee_code FROM employees WHERE id = :id", { id: req.params.id });
-    if (!existing[0]) return res.status(404).json({ error: "Employee not found" });
-
-    await q("UPDATE employees SET deleted_at = NOW() WHERE id = :id", { id: req.params.id });
-
-    // FIX: i-deactivate yung linked login account, para hindi na siya makapag-login
-    // (password login man o face login) kahit na-soft-delete lang yung employees row.
-    await q("UPDATE users SET status = 'inactive' WHERE employee_id = :id", { id: req.params.id });
-
-    // FIX: i-deactivate din yung biometric credentials niya, para hindi na rin
-    // siya ma-match sa face-login recognition loop.
-    await q("UPDATE biometric_credentials SET is_active = FALSE WHERE employee_id = :id", { id: req.params.id });
-
-    await logAudit({
-      userId: req.user.id,
-      action: "delete",
-      module: "employees",
-      recordId: req.params.id,
-      oldValues: { full_name: existing[0].full_name, employee_code: existing[0].employee_code },
-      ip: req.ip,
-    });
-
-    res.json({ ok: true });
-  } catch (err) {
-    console.error("DELETE /employees/:id error:", err);
-    res.status(500).json({ error: err.sqlMessage ?? err.message ?? "Failed to delete employee" });
-  }
-});
+);
 
 export default router;

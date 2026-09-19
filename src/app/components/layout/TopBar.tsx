@@ -1,5 +1,15 @@
+// src/app/components/layout/TopBar.tsx
 import { useState, useRef, useEffect, useMemo } from "react";
-import { Search, Bell, ChevronDown, LogOut, User, Settings, FileText, Menu } from "lucide-react";
+import {
+  Search,
+  Bell,
+  ChevronDown,
+  LogOut,
+  User,
+  Settings,
+  FileText,
+  Menu,
+} from "lucide-react";
 import { useNavigate } from "react-router";
 import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "../../context/AuthContext";
@@ -42,14 +52,25 @@ export function TopBar({ onMenuClick }: TopBarProps) {
   const trimmedQuery = searchValue.trim();
   const lowerQuery = trimmedQuery.toLowerCase();
 
+  // 🔒 Role check
+  const isEmployee = user?.role === "employee";
+  const isAdmin = user?.role === "admin";
+
+  // 🔒 Role-aware paths
+  const notificationPath = isEmployee
+    ? "/portal/notifications"
+    : "/notifications";
+  const profilePath = isEmployee ? "/portal/profile" : "/profile";
+
   const { data: employees } = useQuery<any[]>({
     queryKey: ["employees"],
     queryFn: api.getEmployees,
-    enabled: trimmedQuery.length > 0,
+    // 🔒 Employees list — admin/HR/supervisor only
+    enabled: trimmedQuery.length > 0 && !isEmployee,
   });
 
   const suggestedEmployees = useMemo(() => {
-    if (!employees || !lowerQuery) return [];
+    if (!employees || !lowerQuery || isEmployee) return [];
     return employees
       .filter((e: any) => {
         const haystack = [
@@ -68,18 +89,24 @@ export function TopBar({ onMenuClick }: TopBarProps) {
         return haystack.includes(lowerQuery);
       })
       .slice(0, MAX_SUGGESTIONS);
-  }, [employees, lowerQuery]);
+  }, [employees, lowerQuery, isEmployee]);
 
   const suggestedReports = useMemo(() => {
-    if (!lowerQuery) return [];
-    return REPORT_ITEMS.filter((r) => r.name.toLowerCase().includes(lowerQuery)).slice(0, MAX_SUGGESTIONS);
-  }, [lowerQuery]);
+    if (!lowerQuery || isEmployee) return [];
+    return REPORT_ITEMS.filter((r) =>
+      r.name.toLowerCase().includes(lowerQuery)
+    ).slice(0, MAX_SUGGESTIONS);
+  }, [lowerQuery, isEmployee]);
 
-  const hasSuggestions = suggestedEmployees.length > 0 || suggestedReports.length > 0;
+  const hasSuggestions =
+    suggestedEmployees.length > 0 || suggestedReports.length > 0;
 
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
-      if (searchWrapperRef.current && !searchWrapperRef.current.contains(e.target as Node)) {
+      if (
+        searchWrapperRef.current &&
+        !searchWrapperRef.current.contains(e.target as Node)
+      ) {
         setIsDropdownOpen(false);
       }
     }
@@ -87,13 +114,12 @@ export function TopBar({ onMenuClick }: TopBarProps) {
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
-  const initials = user?.full_name
-    ?.split(" ")
-    .map((n) => n[0])
-    .join("")
-    .toUpperCase() ?? "U";
-
-  const isAdmin = user?.role === "admin";
+  const initials =
+    user?.full_name
+      ?.split(" ")
+      .map((n) => n[0])
+      .join("")
+      .toUpperCase() ?? "U";
 
   async function handleSignOut() {
     await signOut();
@@ -102,6 +128,8 @@ export function TopBar({ onMenuClick }: TopBarProps) {
 
   function goToFullResults(q: string) {
     setIsDropdownOpen(false);
+    // 🔒 Employees lang ang pwedeng mag-search ng ibang tao
+    if (isEmployee) return;
     navigate(`/search?q=${encodeURIComponent(q)}`);
   }
 
@@ -116,12 +144,16 @@ export function TopBar({ onMenuClick }: TopBarProps) {
   function handleEmployeeClick(id: string) {
     setIsDropdownOpen(false);
     setSearchValue("");
+    // 🔒 Employees lang ang pwedeng pumunta sa employee details
+    if (isEmployee) return;
     navigate(`/employees/${id}`);
   }
 
   function handleReportClick() {
     setIsDropdownOpen(false);
     setSearchValue("");
+    // 🔒 Employees lang ang pwedeng pumunta sa reports
+    if (isEmployee) return;
     navigate("/reports");
   }
 
@@ -144,11 +176,14 @@ export function TopBar({ onMenuClick }: TopBarProps) {
           value={searchValue}
           onChange={(e) => {
             setSearchValue(e.target.value);
-            setIsDropdownOpen(e.target.value.trim().length > 0);
+            // 🔒 Employees hindi pwedeng mag-search ng ibang tao
+            setIsDropdownOpen(
+              e.target.value.trim().length > 0 && !isEmployee
+            );
           }}
-          onFocus={() => setIsDropdownOpen(trimmedQuery.length > 0)}
+          onFocus={() => setIsDropdownOpen(trimmedQuery.length > 0 && !isEmployee)}
           onKeyDown={handleSearchKeyDown}
-          placeholder="Search..."
+          placeholder={isEmployee ? "Search..." : "Search..."}
           className="w-full pl-9 pr-4 py-2 text-sm bg-muted/40 border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 transition-all"
         />
 
@@ -166,8 +201,14 @@ export function TopBar({ onMenuClick }: TopBarProps) {
                   Employees
                 </div>
                 {suggestedEmployees.map((e: any) => {
-                  const name = e.full_name ?? `${e.first_name ?? ""} ${e.last_name ?? ""}`.trim();
-                  const empInitials = name.split(" ").map((n: string) => n[0]).join("").toUpperCase();
+                  const name =
+                    e.full_name ??
+                    `${e.first_name ?? ""} ${e.last_name ?? ""}`.trim();
+                  const empInitials = name
+                    .split(" ")
+                    .map((n: string) => n[0])
+                    .join("")
+                    .toUpperCase();
                   return (
                     <button
                       key={e.id}
@@ -181,7 +222,9 @@ export function TopBar({ onMenuClick }: TopBarProps) {
                         </AvatarFallback>
                       </Avatar>
                       <div className="min-w-0">
-                        <p className="text-sm text-foreground truncate">{name || "—"}</p>
+                        <p className="text-sm text-foreground truncate">
+                          {name || "—"}
+                        </p>
                         <p className="text-xs text-muted-foreground truncate">
                           {e.job_title ?? e.position ?? "—"}
                         </p>
@@ -226,7 +269,7 @@ export function TopBar({ onMenuClick }: TopBarProps) {
         <ThemeToggle />
 
         <button
-          onClick={() => navigate("/notifications")}
+          onClick={() => navigate(notificationPath)}
           className="relative w-9 h-9 rounded-lg flex items-center justify-center hover:bg-muted transition-colors"
           aria-label="Notifications"
         >
@@ -248,7 +291,9 @@ export function TopBar({ onMenuClick }: TopBarProps) {
                 </AvatarFallback>
               </Avatar>
               <div className="text-left hidden sm:block">
-                <p className="text-sm font-medium text-foreground leading-tight">{user?.full_name ?? "User"}</p>
+                <p className="text-sm font-medium text-foreground leading-tight">
+                  {user?.full_name ?? "User"}
+                </p>
                 <p className="text-xs text-muted-foreground leading-tight capitalize">
                   {user?.role?.replace("_", " ") ?? "—"}
                 </p>
@@ -260,11 +305,13 @@ export function TopBar({ onMenuClick }: TopBarProps) {
             <DropdownMenuLabel>
               <div>
                 <p className="font-medium">{user?.full_name}</p>
-                <p className="text-xs font-normal text-muted-foreground">{user?.email}</p>
+                <p className="text-xs font-normal text-muted-foreground">
+                  {user?.email}
+                </p>
               </div>
             </DropdownMenuLabel>
             <DropdownMenuSeparator />
-            <DropdownMenuItem onClick={() => navigate("/profile")}>
+            <DropdownMenuItem onClick={() => navigate(profilePath)}>
               <User className="w-4 h-4 mr-2" /> My Profile
             </DropdownMenuItem>
             {isAdmin && (
@@ -273,7 +320,10 @@ export function TopBar({ onMenuClick }: TopBarProps) {
               </DropdownMenuItem>
             )}
             <DropdownMenuSeparator />
-            <DropdownMenuItem onClick={handleSignOut} className="text-destructive focus:text-destructive">
+            <DropdownMenuItem
+              onClick={handleSignOut}
+              className="text-destructive focus:text-destructive"
+            >
               <LogOut className="w-4 h-4 mr-2" /> Sign Out
             </DropdownMenuItem>
           </DropdownMenuContent>

@@ -1,9 +1,10 @@
+// src/app/pages/Login.tsx
 import { useState, useRef, useEffect } from "react";
 import { useNavigate } from "react-router";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { Eye, EyeOff, Fingerprint, AlertCircle, Loader2, Camera, X, Mail, Lock, ShieldCheck, Check } from "lucide-react";
-import { motion, AnimatePresence, useMotionValue, useTransform, useSpring } from "motion/react";
+import { motion, AnimatePresence } from "motion/react";
 import * as faceapi from "face-api.js";
 import { useAuth } from "../context/AuthContext";
 import { api } from "../../lib/api";
@@ -19,38 +20,56 @@ const loginSchema = z.object({
 
 type LoginForm = z.infer<typeof loginSchema>;
 
-// Smooth easing curves
 const SMOOTH_EASE = [0.22, 1, 0.36, 1] as const;
 const BOUNCE_EASE = [0.34, 1.56, 0.64, 1] as const;
 
-// ----- Animated Background Orbs (smoother, more organic) -----
+// 🔒 Per-email lockout keys
+const LOCKOUT_KEY_PREFIX = "wms_lockout_until:";
+const LAST_EMAIL_KEY = "wms_last_email";
+const FACE_LOCKOUT_KEY = "wms_lockout_until:_face_login_";
+
+function getLockoutKey(email: string): string {
+  return `${LOCKOUT_KEY_PREFIX}${email.toLowerCase().trim()}`;
+}
+
+function getLockoutForEmail(email: string): { seconds: number; message: string | null } {
+  if (!email) return { seconds: 0, message: null };
+  try {
+    const key = getLockoutKey(email);
+    const stored = localStorage.getItem(key);
+    if (!stored) return { seconds: 0, message: null };
+    const lockoutUntil = Number(stored);
+    if (isNaN(lockoutUntil)) {
+      localStorage.removeItem(key);
+      return { seconds: 0, message: null };
+    }
+    const remaining = Math.ceil((lockoutUntil - Date.now()) / 1000);
+    if (remaining > 0) {
+      return { seconds: remaining, message: "Too many login attempts." };
+    }
+    localStorage.removeItem(key);
+    return { seconds: 0, message: null };
+  } catch {
+    return { seconds: 0, message: null };
+  }
+}
+
+// ----- Animated Background Orbs -----
 function BackgroundOrbs() {
   return (
     <>
       <motion.div
-        animate={{
-          x: [0, 60, -20, 0],
-          y: [0, -40, 30, 0],
-          scale: [1, 1.15, 0.95, 1],
-        }}
+        animate={{ x: [0, 60, -20, 0], y: [0, -40, 30, 0], scale: [1, 1.15, 0.95, 1] }}
         transition={{ duration: 18, repeat: Infinity, ease: "easeInOut" }}
         className="absolute -top-20 -left-20 w-[28rem] h-[28rem] rounded-full bg-primary/20 blur-[100px] pointer-events-none"
       />
       <motion.div
-        animate={{
-          x: [0, -70, 30, 0],
-          y: [0, 50, -30, 0],
-          scale: [1, 1.2, 0.9, 1],
-        }}
+        animate={{ x: [0, -70, 30, 0], y: [0, 50, -30, 0], scale: [1, 1.2, 0.9, 1] }}
         transition={{ duration: 22, repeat: Infinity, ease: "easeInOut" }}
         className="absolute -bottom-20 -right-20 w-[26rem] h-[26rem] rounded-full bg-cyan-400/20 blur-[100px] pointer-events-none"
       />
       <motion.div
-        animate={{
-          x: [0, 40, -40, 0],
-          y: [0, -25, 25, 0],
-          scale: [1, 1.1, 1.1, 1],
-        }}
+        animate={{ x: [0, 40, -40, 0], y: [0, -25, 25, 0], scale: [1, 1.1, 1.1, 1] }}
         transition={{ duration: 25, repeat: Infinity, ease: "easeInOut" }}
         className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[24rem] h-[24rem] rounded-full bg-violet-500/15 blur-[100px] pointer-events-none"
       />
@@ -58,7 +77,7 @@ function BackgroundOrbs() {
   );
 }
 
-// ----- Animated Logo (rotating dashed ring + pulse + glow + shine) -----
+// ----- Animated Logo -----
 function AnimatedLogo() {
   return (
     <motion.div
@@ -67,48 +86,27 @@ function AnimatedLogo() {
       transition={{ duration: 0.8, ease: BOUNCE_EASE }}
       className="relative flex items-center justify-center w-24 h-24 mx-auto mb-5"
     >
-      {/* Outer rotating dashed ring */}
       <motion.div
         animate={{ rotate: 360 }}
         transition={{ duration: 12, repeat: Infinity, ease: "linear" }}
         className="absolute inset-0 rounded-full border-2 border-dashed border-white/30"
       />
-
-      {/* Middle glowing ring */}
       <motion.div
-        animate={{
-          scale: [1, 1.2, 1],
-          opacity: [0.4, 0.9, 0.4],
-        }}
+        animate={{ scale: [1, 1.2, 1], opacity: [0.4, 0.9, 0.4] }}
         transition={{ duration: 2.5, repeat: Infinity, ease: "easeInOut" }}
         className="absolute inset-2 rounded-full bg-white/25"
       />
-
-      {/* Inner glow ring */}
       <motion.div
-        animate={{
-          scale: [1, 1.1, 1],
-          opacity: [0.6, 1, 0.6],
-        }}
+        animate={{ scale: [1, 1.1, 1], opacity: [0.6, 1, 0.6] }}
         transition={{ duration: 1.8, repeat: Infinity, ease: "easeInOut", delay: 0.3 }}
         className="absolute inset-4 rounded-full bg-white/40 blur-sm"
       />
-
-      {/* Logo with subtle float + shine */}
       <motion.div
-        animate={{
-          scale: [1, 1.06, 1],
-          y: [0, -2, 0],
-        }}
+        animate={{ scale: [1, 1.06, 1], y: [0, -2, 0] }}
         transition={{ duration: 2.5, repeat: Infinity, ease: "easeInOut" }}
         className="relative w-14 h-14 rounded-2xl overflow-hidden shadow-2xl z-10"
       >
-        <img
-          src={logo}
-          alt="Tri-M Global"
-          className="w-full h-full object-contain bg-white p-1.5"
-        />
-        {/* Shine sweep */}
+        <img src={logo} alt="Tri-M Global" className="w-full h-full object-contain bg-white p-1.5" />
         <motion.div
           animate={{ x: ["-120%", "220%"] }}
           transition={{ duration: 2.5, repeat: Infinity, ease: "easeInOut", repeatDelay: 1.5 }}
@@ -119,18 +117,14 @@ function AnimatedLogo() {
   );
 }
 
-// ----- Animated Illustration (floating + subtle animations) -----
+// ----- Animated Illustration -----
 function WorkforceIllustration() {
   return (
     <motion.svg
       viewBox="0 0 420 300"
       className="w-full h-auto max-w-[400px]"
       initial={{ opacity: 0, scale: 0.9 }}
-      animate={{
-        opacity: 1,
-        scale: 1,
-        y: [0, -12, 0],
-      }}
+      animate={{ opacity: 1, scale: 1, y: [0, -12, 0] }}
       transition={{
         opacity: { duration: 0.8, delay: 0.4, ease: SMOOTH_EASE },
         scale: { duration: 0.8, delay: 0.4, ease: SMOOTH_EASE },
@@ -173,16 +167,13 @@ function WorkforceIllustration() {
           <stop offset="100%" stopColor="#67e8f9" stopOpacity="0" />
         </radialGradient>
       </defs>
-
       <g opacity="0.16" stroke="#ffffff" strokeWidth="1">
         <line x1="30" y1="35" x2="80" y2="58" />
         <line x1="80" y1="58" x2="55" y2="95" />
         <line x1="80" y1="58" x2="130" y2="40" />
       </g>
-
       <ellipse cx="230" cy="272" rx="185" ry="16" fill="url(#wfGlow)" opacity="0.5" />
       <path d="M118,258 C165,278 215,268 255,246 C280,232 300,232 322,222" fill="none" stroke="rgba(255,255,255,0.18)" strokeWidth="3" strokeDasharray="1 9" strokeLinecap="round" />
-
       <g>
         <polygon points="95,240 121,225 95,210 69,225" fill="url(#wfTopFace)" />
         <polygon points="69,225 95,240 95,270 69,255" fill="url(#wfLeftFace)" />
@@ -199,10 +190,7 @@ function WorkforceIllustration() {
         <polygon points="95,180 121,165 121,195 95,210" fill="url(#wfRightFace)" />
         <polygon points="73,171 95,183 95,201 73,189" fill="url(#wfScreenGlow)" opacity="0.35" />
       </g>
-      <motion.g
-        animate={{ y: [0, -4, 0] }}
-        transition={{ duration: 2.2, repeat: Infinity, ease: "easeInOut" }}
-      >
+      <motion.g animate={{ y: [0, -4, 0] }} transition={{ duration: 2.2, repeat: Infinity, ease: "easeInOut" }}>
         <polygon points="95,150 121,135 95,120 69,135" fill="url(#wfAccentTop)" />
         <polygon points="69,135 95,150 95,158 69,143" fill="url(#wfAccentLeft)" />
         <polygon points="95,150 121,135 121,143 95,158" fill="url(#wfAccentRight)" />
@@ -225,8 +213,16 @@ export function LoginPage() {
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [success, setSuccess] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [lockoutSeconds, setLockoutSeconds] = useState(0);
+
+  // 🔒 Restore last email from localStorage
+  const [lastEmail, setLastEmail] = useState<string>(() => {
+    return localStorage.getItem(LAST_EMAIL_KEY) || "";
+  });
+
+  // 🔒 Compute initial lockout state ONCE for last email
+  const initialLockout = getLockoutForEmail(lastEmail);
+  const [error, setError] = useState<string | null>(initialLockout.message);
+  const [lockoutSeconds, setLockoutSeconds] = useState(initialLockout.seconds);
 
   const [mfaRequired, setMfaRequired] = useState(false);
   const [mfaTempToken, setMfaTempToken] = useState("");
@@ -234,33 +230,52 @@ export function LoginPage() {
   const [mfaError, setMfaError] = useState<string | null>(null);
   const [mfaLoading, setMfaLoading] = useState(false);
 
-  // Parallax tilt effect sa card (nag-follow sa mouse)
-  const cardRef = useRef<HTMLDivElement>(null);
-  const mouseX = useMotionValue(0);
-  const mouseY = useMotionValue(0);
-  const rotateX = useSpring(useTransform(mouseY, [-0.5, 0.5], [6, -6]), { stiffness: 200, damping: 20 });
-  const rotateY = useSpring(useTransform(mouseX, [-0.5, 0.5], [-6, 6]), { stiffness: 200, damping: 20 });
+  const { register, handleSubmit, formState: { errors }, watch } = useForm<LoginForm>({
+    defaultValues: {
+      email: lastEmail,
+      password: "",
+    },
+  });
 
-  function handleMouseMove(e: React.MouseEvent<HTMLDivElement>) {
-    if (!cardRef.current) return;
-    const rect = cardRef.current.getBoundingClientRect();
-    const x = (e.clientX - rect.left) / rect.width - 0.5;
-    const y = (e.clientY - rect.top) / rect.height - 0.5;
-    mouseX.set(x);
-    mouseY.set(y);
-  }
+  // 🔒 Watch email field changes
+  const watchedEmail = watch("email");
 
-  function handleMouseLeave() {
-    mouseX.set(0);
-    mouseY.set(0);
-  }
+  // 🔒 Sync sa visibility change at storage change
+  useEffect(() => {
+    const checkLockoutForCurrentEmail = () => {
+      const email = watchedEmail || lastEmail;
+      if (!email) return;
+      const result = getLockoutForEmail(email);
+      if (result.seconds > 0) {
+        setLockoutSeconds(result.seconds);
+        setError("Too many login attempts.");
+      } else {
+        setLockoutSeconds(0);
+        if (error === "Too many login attempts.") setError(null);
+      }
+    };
 
-  const {
-    register,
-    handleSubmit,
-    formState: { errors },
-  } = useForm<LoginForm>();
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        checkLockoutForCurrentEmail();
+      }
+    };
+    document.addEventListener("visibilitychange", handleVisibilityChange);
 
+    const handleStorageChange = (e: StorageEvent) => {
+      if (e.key && e.key.startsWith(LOCKOUT_KEY_PREFIX)) {
+        checkLockoutForCurrentEmail();
+      }
+    };
+    window.addEventListener("storage", handleStorageChange);
+
+    return () => {
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      window.removeEventListener("storage", handleStorageChange);
+    };
+  }, [watchedEmail, lastEmail, error]);
+
+  // 🔒 Countdown timer
   useEffect(() => {
     if (lockoutSeconds <= 0) return;
     const timer = setInterval(() => {
@@ -268,27 +283,48 @@ export function LoginPage() {
         if (prev <= 1) {
           clearInterval(timer);
           setError(null);
+          const email = watchedEmail || lastEmail;
+          if (email) {
+            localStorage.removeItem(getLockoutKey(email));
+          }
           return 0;
         }
         return prev - 1;
       });
     }, 1000);
     return () => clearInterval(timer);
-  }, [lockoutSeconds]);
+  }, [lockoutSeconds, watchedEmail, lastEmail]);
 
   const isLocked = lockoutSeconds > 0;
 
   async function onSubmit(data: LoginForm) {
     if (isLocked) return;
+
+    const normalizedEmail = data.email.toLowerCase().trim();
+    localStorage.setItem(LAST_EMAIL_KEY, normalizedEmail);
+    setLastEmail(normalizedEmail);
+
     setIsLoading(true);
     setError(null);
     const res = await signIn(data.email, data.password);
 
     if (res.error) {
-      if (res.error.secondsLeft && res.error.secondsLeft > 0) {
+      const lockoutKey = getLockoutKey(normalizedEmail);
+
+      if (res.error.lockedUntil) {
+        const lockoutUntil = new Date(res.error.lockedUntil).getTime();
+        localStorage.setItem(lockoutKey, lockoutUntil.toString());
+        const remaining = Math.ceil((lockoutUntil - Date.now()) / 1000);
+        setLockoutSeconds(remaining);
+        setError("Too many login attempts.");
+      } else if (res.error.secondsLeft && res.error.secondsLeft > 0) {
+        const lockoutUntil = Date.now() + res.error.secondsLeft * 1000;
+        localStorage.setItem(lockoutKey, lockoutUntil.toString());
         setLockoutSeconds(res.error.secondsLeft);
+        setError("Too many login attempts.");
+      } else {
+        setError(res.error.message);
       }
-      setError(res.error.message);
       setIsLoading(false);
       return;
     }
@@ -414,10 +450,20 @@ export function LoginPage() {
       const res = await faceSignIn(descriptor);
 
       if (res.error) {
-        if (res.error.secondsLeft && res.error.secondsLeft > 0) {
+        if (res.error.lockedUntil) {
+          const lockoutUntil = new Date(res.error.lockedUntil).getTime();
+          localStorage.setItem(FACE_LOCKOUT_KEY, lockoutUntil.toString());
+          const remaining = Math.ceil((lockoutUntil - Date.now()) / 1000);
+          setLockoutSeconds(remaining);
+          setFaceError("Too many login attempts.");
+        } else if (res.error.secondsLeft && res.error.secondsLeft > 0) {
+          const lockoutUntil = Date.now() + res.error.secondsLeft * 1000;
+          localStorage.setItem(FACE_LOCKOUT_KEY, lockoutUntil.toString());
           setLockoutSeconds(res.error.secondsLeft);
+          setFaceError("Too many login attempts.");
+        } else {
+          setFaceError(res.error.message);
         }
-        setFaceError(res.error.message);
         setDetecting(false);
         return;
       }
@@ -447,7 +493,6 @@ export function LoginPage() {
     }
   }
 
-  // Success overlay
   if (success) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-background relative overflow-hidden">
@@ -497,7 +542,6 @@ export function LoginPage() {
     <div className="min-h-screen flex bg-background relative overflow-hidden">
       <BackgroundOrbs />
 
-      {/* Left panel — branding */}
       <motion.div
         initial={{ opacity: 0, x: -40 }}
         animate={{ opacity: 1, x: 0 }}
@@ -571,7 +615,6 @@ export function LoginPage() {
         </div>
       </motion.div>
 
-      {/* Right panel — form with parallax tilt */}
       <div className="flex-1 relative overflow-hidden flex items-center justify-center p-4 sm:p-8 z-10">
         <div
           className="absolute inset-0 opacity-40"
@@ -582,13 +625,9 @@ export function LoginPage() {
         />
 
         <motion.div
-          ref={cardRef}
-          onMouseMove={handleMouseMove}
-          onMouseLeave={handleMouseLeave}
           initial={{ opacity: 0, y: 40, scale: 0.94 }}
           animate={{ opacity: 1, y: 0, scale: 1 }}
           transition={{ duration: 0.9, ease: SMOOTH_EASE, delay: 0.15 }}
-          style={{ perspective: 1200 }}
           className="relative z-10 w-full max-w-[440px]"
         >
           <div className="flex lg:hidden items-center gap-3 mb-6 justify-center">
@@ -605,13 +644,8 @@ export function LoginPage() {
             </div>
           </div>
 
-          <motion.div
-            style={{ rotateX, rotateY, transformStyle: "preserve-3d" }}
-            className="bg-background/95 backdrop-blur-xl rounded-3xl border border-border shadow-[0_30px_80px_-20px_rgba(124,58,237,0.25)] overflow-hidden"
-          >
-            {/* Animated header with moving gradient */}
+          <div className="bg-background/95 backdrop-blur-xl rounded-3xl border border-border shadow-[0_30px_80px_-20px_rgba(124,58,237,0.25)] overflow-hidden">
             <div className="relative overflow-hidden bg-gradient-to-r from-primary via-violet-600 to-indigo-600 px-6 sm:px-8 py-7">
-              {/* Animated gradient overlay */}
               <motion.div
                 animate={{
                   background: [
@@ -624,7 +658,6 @@ export function LoginPage() {
                 className="absolute inset-0 pointer-events-none"
               />
 
-              {/* Shimmer sweep */}
               <motion.div
                 animate={{ x: ["-150%", "250%"] }}
                 transition={{ duration: 3.5, repeat: Infinity, ease: "easeInOut", repeatDelay: 1.8 }}
@@ -655,7 +688,6 @@ export function LoginPage() {
               </div>
             </div>
 
-            {/* Form body */}
             <div className="p-6 sm:p-8 space-y-5">
               <AnimatePresence mode="wait">
                 {mfaRequired ? (
@@ -748,15 +780,14 @@ export function LoginPage() {
                           animate={{ opacity: 1, y: 0, height: "auto" }}
                           exit={{ opacity: 0, y: -10, height: 0 }}
                           transition={{ duration: 0.3, ease: SMOOTH_EASE }}
-                          className="flex items-start gap-3 p-3.5 bg-destructive/10 border border-destructive/20 rounded-lg overflow-hidden"
+                          className="flex items-center gap-3 p-3.5 bg-destructive/10 border border-destructive/20 rounded-lg overflow-hidden"
                         >
-                          <AlertCircle className="w-4 h-4 text-destructive shrink-0 mt-0.5" />
-                          <div className="text-sm text-destructive">
-                            <p>{error}</p>
-                            {isLocked && (
-                              <p className="mt-1 font-semibold">⏳ Still locked: {lockoutSeconds}s</p>
-                            )}
-                          </div>
+                          <AlertCircle className="w-4 h-4 text-destructive shrink-0" />
+                          <p className="text-sm text-destructive">
+                            {isLocked
+                              ? `Too many login attempts. Try again in ${lockoutSeconds}s.`
+                              : error}
+                          </p>
                         </motion.div>
                       )}
                     </AnimatePresence>
@@ -879,7 +910,7 @@ export function LoginPage() {
                 )}
               </AnimatePresence>
             </div>
-          </motion.div>
+          </div>
 
           <motion.p
             initial={{ opacity: 0 }}
@@ -892,7 +923,6 @@ export function LoginPage() {
         </motion.div>
       </div>
 
-      {/* Face ID Modal */}
       <Dialog open={showFaceModal} onOpenChange={(open) => { if (!open) closeFaceModal(); }}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader><DialogTitle>Sign in with Face ID</DialogTitle></DialogHeader>

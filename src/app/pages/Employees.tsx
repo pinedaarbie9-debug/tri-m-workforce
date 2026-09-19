@@ -1,3 +1,4 @@
+// src/app/pages/Employees.tsx
 import { useState, useEffect, useCallback } from "react";
 import {
   Search, Plus, Download, MoreHorizontal, Edit2, Trash2, Eye, Mail,
@@ -31,17 +32,17 @@ function getDeptName(emp: Employee): string {
 }
 
 function generateEmployeeCode(employees: Employee[]): string {
-  const year = new Date().getFullYear();
-  const prefix = `EMP-${year}-`;
-  let maxSeq = 0;
+  const prefix = "EMP-";
+  let maxNum = 0;
   for (const emp of employees) {
     const code = emp.employee_code ?? "";
     if (code.startsWith(prefix)) {
-      const seq = parseInt(code.slice(prefix.length), 10);
-      if (!isNaN(seq) && seq > maxSeq) maxSeq = seq;
+      const numStr = code.slice(prefix.length).replace(/\D/g, "");
+      const num = parseInt(numStr, 10);
+      if (!isNaN(num) && num > maxNum) maxNum = num;
     }
   }
-  const next = String(maxSeq + 1).padStart(3, "0");
+  const next = String(maxNum + 1).padStart(3, "0");
   return `${prefix}${next}`;
 }
 
@@ -60,6 +61,9 @@ const emptyForm = {
   hire_date: "",
 };
 
+// 🔒 Field error type
+type FieldErrors = Record<string, string>;
+
 export function EmployeesPage() {
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [departments, setDepartments] = useState<any[]>([]);
@@ -76,12 +80,14 @@ export function EmployeesPage() {
   const [form, setForm] = useState(emptyForm);
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
+  const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
 
   const [showEditModal, setShowEditModal] = useState(false);
   const [editingEmployee, setEditingEmployee] = useState<Employee | null>(null);
   const [editForm, setEditForm] = useState(emptyForm);
   const [editSaving, setEditSaving] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);
+  const [editFieldErrors, setEditFieldErrors] = useState<FieldErrors>({});
 
   const fetchEmployees = useCallback(async (showSpinner = true) => {
     if (showSpinner) setLoading(true);
@@ -136,6 +142,7 @@ export function EmployeesPage() {
   function openAddModal() {
     setForm({ ...emptyForm, employee_code: generateEmployeeCode(employees) });
     setFormError(null);
+    setFieldErrors({});
     setShowAddModal(true);
   }
 
@@ -143,18 +150,59 @@ export function EmployeesPage() {
     setForm((f) => ({ ...f, employee_code: generateEmployeeCode(employees) }));
   }
 
+  // 🔒 Validate employee form
+  function validateEmployeeForm(data: typeof emptyForm, isEdit = false): FieldErrors {
+    const errors: FieldErrors = {};
+
+    if (!isEdit && !data.employee_code.trim()) {
+      errors.employee_code = "Employee ID is required.";
+    }
+    if (!data.first_name.trim()) {
+      errors.first_name = "First name is required.";
+    }
+    if (!data.last_name.trim()) {
+      errors.last_name = "Last name is required.";
+    }
+    if (!data.email.trim()) {
+      errors.email = "Email is required.";
+    } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(data.email.trim())) {
+      errors.email = "Invalid email format.";
+    }
+    if (!data.hire_date) {
+      errors.hire_date = "Hire date is required.";
+    }
+
+    return errors;
+  }
+
   async function handleAddEmployee(e: React.FormEvent) {
     e.preventDefault();
     setFormError(null);
-    if (!form.employee_code.trim() || !form.first_name.trim() || !form.last_name.trim() || !form.email.trim()) {
-      setFormError("Employee ID, First Name, Last Name, and Email are required.");
+
+    // 🔒 Validate lahat ng required fields
+    const errors = validateEmployeeForm(form);
+    setFieldErrors(errors);
+
+    if (Object.keys(errors).length > 0) {
+      setFormError("Please fill in all required fields.");
       return;
     }
+
     setSaving(true);
     try {
-      await api.createEmployee({ ...form, department_id: form.department_id || null, hire_date: form.hire_date || null });
+      await api.createEmployee({
+        ...form,
+        first_name: form.first_name.trim(),
+        last_name: form.last_name.trim(),
+        email: form.email.trim().toLowerCase(),
+        phone: form.phone.trim() || null,
+        job_title: form.job_title.trim() || null,
+        department_id: form.department_id || null,
+        hire_date: form.hire_date, // Required na ngayon
+      });
       setShowAddModal(false);
       setForm(emptyForm);
+      setFieldErrors({});
       fetchEmployees();
     } catch (err: any) {
       setFormError(err.message ?? "Failed to add employee.");
@@ -175,37 +223,46 @@ export function EmployeesPage() {
       department_id: emp.department_id ?? "",
       employment_type: emp.employment_type,
       status: emp.status,
-      hire_date: emp.hire_date ?? "",
+      hire_date: emp.hire_date ? emp.hire_date.slice(0, 10) : "",
     });
     setEditError(null);
+    setEditFieldErrors({});
     setShowEditModal(true);
   }
 
   function closeEditModal() {
     setShowEditModal(false);
     setEditingEmployee(null);
+    setEditFieldErrors({});
   }
 
   async function handleEditEmployee(e: React.FormEvent) {
     e.preventDefault();
     setEditError(null);
+
     if (!editingEmployee) return;
-    if (!editForm.first_name.trim() || !editForm.last_name.trim() || !editForm.email.trim()) {
-      setEditError("First Name, Last Name, and Email are required.");
+
+    // 🔒 Validate edit form
+    const errors = validateEmployeeForm(editForm, true);
+    setEditFieldErrors(errors);
+
+    if (Object.keys(errors).length > 0) {
+      setEditError("Please fill in all required fields.");
       return;
     }
+
     setEditSaving(true);
     try {
       await api.updateEmployee(editingEmployee.id, {
-        first_name: editForm.first_name,
-        last_name: editForm.last_name,
-        email: editForm.email,
-        phone: editForm.phone,
-        job_title: editForm.job_title,
+        first_name: editForm.first_name.trim(),
+        last_name: editForm.last_name.trim(),
+        email: editForm.email.trim().toLowerCase(),
+        phone: editForm.phone.trim() || null,
+        job_title: editForm.job_title.trim() || null,
         department_id: editForm.department_id || null,
         employment_type: editForm.employment_type,
         status: editForm.status,
-        hire_date: editForm.hire_date || null,
+        hire_date: editForm.hire_date, // Required na ngayon
       });
       closeEditModal();
       fetchEmployees(false);
@@ -421,21 +478,42 @@ export function EmployeesPage() {
 
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
-                <label className="text-sm font-medium text-foreground">First Name</label>
-                <input value={form.first_name} onChange={(e) => setForm({ ...form, first_name: e.target.value })}
-                  className="w-full px-3.5 py-2.5 rounded-lg border border-border bg-input-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/20" placeholder="Juan" />
+                <label className="text-sm font-medium text-foreground">
+                  First Name <span className="text-destructive">*</span>
+                </label>
+                <input value={form.first_name} onChange={(e) => {
+                  setForm({ ...form, first_name: e.target.value });
+                  if (fieldErrors.first_name) setFieldErrors((prev) => ({ ...prev, first_name: "" }));
+                }}
+                  className={`w-full px-3.5 py-2.5 rounded-lg border bg-input-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 ${fieldErrors.first_name ? "border-destructive" : "border-border"}`}
+                  placeholder="Juan" />
+                {fieldErrors.first_name && <p className="text-xs text-destructive">{fieldErrors.first_name}</p>}
               </div>
               <div className="space-y-1.5">
-                <label className="text-sm font-medium text-foreground">Last Name</label>
-                <input value={form.last_name} onChange={(e) => setForm({ ...form, last_name: e.target.value })}
-                  className="w-full px-3.5 py-2.5 rounded-lg border border-border bg-input-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/20" placeholder="Dela Cruz" />
+                <label className="text-sm font-medium text-foreground">
+                  Last Name <span className="text-destructive">*</span>
+                </label>
+                <input value={form.last_name} onChange={(e) => {
+                  setForm({ ...form, last_name: e.target.value });
+                  if (fieldErrors.last_name) setFieldErrors((prev) => ({ ...prev, last_name: "" }));
+                }}
+                  className={`w-full px-3.5 py-2.5 rounded-lg border bg-input-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 ${fieldErrors.last_name ? "border-destructive" : "border-border"}`}
+                  placeholder="Dela Cruz" />
+                {fieldErrors.last_name && <p className="text-xs text-destructive">{fieldErrors.last_name}</p>}
               </div>
             </div>
 
             <div className="space-y-1.5">
-              <label className="text-sm font-medium text-foreground">Email</label>
-              <input type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })}
-                className="w-full px-3.5 py-2.5 rounded-lg border border-border bg-input-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/20" placeholder="juan@company.com" />
+              <label className="text-sm font-medium text-foreground">
+                Email <span className="text-destructive">*</span>
+              </label>
+              <input type="email" value={form.email} onChange={(e) => {
+                setForm({ ...form, email: e.target.value });
+                if (fieldErrors.email) setFieldErrors((prev) => ({ ...prev, email: "" }));
+              }}
+                className={`w-full px-3.5 py-2.5 rounded-lg border bg-input-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 ${fieldErrors.email ? "border-destructive" : "border-border"}`}
+                placeholder="juan@company.com" />
+              {fieldErrors.email && <p className="text-xs text-destructive">{fieldErrors.email}</p>}
             </div>
 
             <div className="space-y-1.5">
@@ -485,9 +563,15 @@ export function EmployeesPage() {
             </div>
 
             <div className="space-y-1.5">
-              <label className="text-sm font-medium text-foreground">Hire Date (optional)</label>
-              <input type="date" value={form.hire_date} onChange={(e) => setForm({ ...form, hire_date: e.target.value })}
-                className="w-full px-3.5 py-2.5 rounded-lg border border-border bg-input-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/20" />
+              <label className="text-sm font-medium text-foreground">
+                Hire Date <span className="text-destructive">*</span>
+              </label>
+              <input type="date" value={form.hire_date} onChange={(e) => {
+                setForm({ ...form, hire_date: e.target.value });
+                if (fieldErrors.hire_date) setFieldErrors((prev) => ({ ...prev, hire_date: "" }));
+              }}
+                className={`w-full px-3.5 py-2.5 rounded-lg border bg-input-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 ${fieldErrors.hire_date ? "border-destructive" : "border-border"}`} />
+              {fieldErrors.hire_date && <p className="text-xs text-destructive">{fieldErrors.hire_date}</p>}
             </div>
 
             <div className="flex justify-end gap-2 pt-2">
@@ -516,21 +600,39 @@ export function EmployeesPage() {
 
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
-                <label className="text-sm font-medium text-foreground">First Name</label>
-                <input value={editForm.first_name} onChange={(e) => setEditForm({ ...editForm, first_name: e.target.value })}
-                  className="w-full px-3.5 py-2.5 rounded-lg border border-border bg-input-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/20" />
+                <label className="text-sm font-medium text-foreground">
+                  First Name <span className="text-destructive">*</span>
+                </label>
+                <input value={editForm.first_name} onChange={(e) => {
+                  setEditForm({ ...editForm, first_name: e.target.value });
+                  if (editFieldErrors.first_name) setEditFieldErrors((prev) => ({ ...prev, first_name: "" }));
+                }}
+                  className={`w-full px-3.5 py-2.5 rounded-lg border bg-input-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 ${editFieldErrors.first_name ? "border-destructive" : "border-border"}`} />
+                {editFieldErrors.first_name && <p className="text-xs text-destructive">{editFieldErrors.first_name}</p>}
               </div>
               <div className="space-y-1.5">
-                <label className="text-sm font-medium text-foreground">Last Name</label>
-                <input value={editForm.last_name} onChange={(e) => setEditForm({ ...editForm, last_name: e.target.value })}
-                  className="w-full px-3.5 py-2.5 rounded-lg border border-border bg-input-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/20" />
+                <label className="text-sm font-medium text-foreground">
+                  Last Name <span className="text-destructive">*</span>
+                </label>
+                <input value={editForm.last_name} onChange={(e) => {
+                  setEditForm({ ...editForm, last_name: e.target.value });
+                  if (editFieldErrors.last_name) setEditFieldErrors((prev) => ({ ...prev, last_name: "" }));
+                }}
+                  className={`w-full px-3.5 py-2.5 rounded-lg border bg-input-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 ${editFieldErrors.last_name ? "border-destructive" : "border-border"}`} />
+                {editFieldErrors.last_name && <p className="text-xs text-destructive">{editFieldErrors.last_name}</p>}
               </div>
             </div>
 
             <div className="space-y-1.5">
-              <label className="text-sm font-medium text-foreground">Email</label>
-              <input type="email" value={editForm.email} onChange={(e) => setEditForm({ ...editForm, email: e.target.value })}
-                className="w-full px-3.5 py-2.5 rounded-lg border border-border bg-input-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/20" />
+              <label className="text-sm font-medium text-foreground">
+                Email <span className="text-destructive">*</span>
+              </label>
+              <input type="email" value={editForm.email} onChange={(e) => {
+                setEditForm({ ...editForm, email: e.target.value });
+                if (editFieldErrors.email) setEditFieldErrors((prev) => ({ ...prev, email: "" }));
+              }}
+                className={`w-full px-3.5 py-2.5 rounded-lg border bg-input-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 ${editFieldErrors.email ? "border-destructive" : "border-border"}`} />
+              {editFieldErrors.email && <p className="text-xs text-destructive">{editFieldErrors.email}</p>}
             </div>
 
             <div className="space-y-1.5">
@@ -580,9 +682,15 @@ export function EmployeesPage() {
             </div>
 
             <div className="space-y-1.5">
-              <label className="text-sm font-medium text-foreground">Hire Date (optional)</label>
-              <input type="date" value={editForm.hire_date} onChange={(e) => setEditForm({ ...editForm, hire_date: e.target.value })}
-                className="w-full px-3.5 py-2.5 rounded-lg border border-border bg-input-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/20" />
+              <label className="text-sm font-medium text-foreground">
+                Hire Date <span className="text-destructive">*</span>
+              </label>
+              <input type="date" value={editForm.hire_date} onChange={(e) => {
+                setEditForm({ ...editForm, hire_date: e.target.value });
+                if (editFieldErrors.hire_date) setEditFieldErrors((prev) => ({ ...prev, hire_date: "" }));
+              }}
+                className={`w-full px-3.5 py-2.5 rounded-lg border bg-input-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 ${editFieldErrors.hire_date ? "border-destructive" : "border-border"}`} />
+              {editFieldErrors.hire_date && <p className="text-xs text-destructive">{editFieldErrors.hire_date}</p>}
             </div>
 
             <div className="flex justify-end gap-2 pt-2">

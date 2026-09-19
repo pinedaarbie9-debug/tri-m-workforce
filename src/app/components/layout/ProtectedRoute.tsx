@@ -1,15 +1,23 @@
-import { Navigate } from "react-router";
+// src/app/components/ProtectedRoute.tsx
+import { Navigate, useLocation } from "react-router";
 import { useAuth } from "../../context/AuthContext";
 
 interface ProtectedRouteProps {
   children: React.ReactNode;
-  // Kung binigyan ng roles, dapat kasama sa listahan ang role ng naka-login
-  // bago ipakita ang laman. Kung wala, kahit sinong naka-login ay pwede.
   roles?: string[];
 }
 
+// 🔒 Role hierarchy — 4 roles lang
+const ROLE_HIERARCHY: Record<string, number> = {
+  admin: 100,
+  hr_manager: 80,
+  supervisor: 60,
+  employee: 20,
+};
+
 export function ProtectedRoute({ children, roles }: ProtectedRouteProps) {
   const { isAuthenticated, loading, user } = useAuth();
+  const location = useLocation();
 
   if (loading) {
     return (
@@ -23,16 +31,21 @@ export function ProtectedRoute({ children, roles }: ProtectedRouteProps) {
   }
 
   if (!isAuthenticated) {
-    return <Navigate to="/login" replace />;
+    return (
+      <Navigate
+        to={`/login?redirect=${encodeURIComponent(location.pathname)}`}
+        replace
+      />
+    );
   }
 
-  // May role restriction ba ang route na ito, at hindi kasama ang role ng user?
+  // 🔒 Role check
   if (roles && user && !roles.includes(user.role)) {
-    // Empleyado pero sinusubukang pumasok sa admin area → ibalik sa Employee Portal
+    // Employee → redirect sa portal
     if (user.role === "employee") {
       return <Navigate to="/portal" replace />;
     }
-    // Admin/HR/atbp. pero sinusubukang pumasok sa Employee Portal → ibalik sa admin dashboard
+    // Management → redirect sa dashboard
     return <Navigate to="/" replace />;
   }
 

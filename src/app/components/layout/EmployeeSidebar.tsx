@@ -1,3 +1,4 @@
+// src/app/components/layout/EmployeeSidebar.tsx
 import { NavLink, useLocation } from "react-router";
 import {
   LayoutDashboard,
@@ -11,6 +12,7 @@ import {
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { cn } from "../../components/ui/utils";
+import { useNotifications } from "./NotificationsContext";
 import logo from "../../assets/tri-m-logo.png";
 
 interface NavItem {
@@ -35,6 +37,7 @@ interface EmployeeSidebarProps {
 
 export function EmployeeSidebar({ collapsed, onToggle }: EmployeeSidebarProps) {
   const location = useLocation();
+  const { unreadCount } = useNotifications();
 
   return (
     <motion.aside
@@ -59,8 +62,12 @@ export function EmployeeSidebar({ collapsed, onToggle }: EmployeeSidebarProps) {
                 transition={{ duration: 0.15 }}
                 className="overflow-hidden"
               >
-                <p className="text-white font-semibold text-sm leading-tight whitespace-nowrap">Tri-M Global</p>
-                <p className="text-sidebar-foreground text-xs whitespace-nowrap">Employee Portal</p>
+                <p className="text-white font-semibold text-sm leading-tight whitespace-nowrap">
+                  Tri-M Global
+                </p>
+                <p className="text-sidebar-foreground text-xs whitespace-nowrap">
+                  Employee Portal
+                </p>
               </motion.div>
             )}
           </AnimatePresence>
@@ -73,6 +80,8 @@ export function EmployeeSidebar({ collapsed, onToggle }: EmployeeSidebarProps) {
             item.path === "/portal"
               ? location.pathname === "/portal"
               : location.pathname.startsWith(item.path);
+
+          const isNotificationItem = item.path === "/portal/notifications";
 
           return (
             <NavLink key={item.path} to={item.path} className="block px-3">
@@ -91,7 +100,9 @@ export function EmployeeSidebar({ collapsed, onToggle }: EmployeeSidebarProps) {
                 <item.icon
                   className={cn(
                     "shrink-0 w-4 h-4",
-                    isActive ? "text-sidebar-primary" : "text-sidebar-foreground/70 group-hover:text-white"
+                    isActive
+                      ? "text-sidebar-primary"
+                      : "text-sidebar-foreground/70 group-hover:text-white"
                   )}
                 />
                 <AnimatePresence initial={false}>
@@ -107,6 +118,11 @@ export function EmployeeSidebar({ collapsed, onToggle }: EmployeeSidebarProps) {
                     </motion.span>
                   )}
                 </AnimatePresence>
+                {!collapsed && isNotificationItem && unreadCount > 0 && (
+                  <span className="bg-sidebar-primary text-white text-[10px] font-semibold px-1.5 py-0.5 rounded-full">
+                    {unreadCount}
+                  </span>
+                )}
               </div>
             </NavLink>
           );
@@ -117,7 +133,11 @@ export function EmployeeSidebar({ collapsed, onToggle }: EmployeeSidebarProps) {
         onClick={onToggle}
         className="absolute top-1/2 -right-3 w-6 h-6 rounded-full bg-sidebar-primary text-white flex items-center justify-center shadow-lg hover:scale-110 transition-transform z-10"
       >
-        {collapsed ? <ChevronRight className="w-3 h-3" /> : <ChevronLeft className="w-3 h-3" />}
+        {collapsed ? (
+          <ChevronRight className="w-3 h-3" />
+        ) : (
+          <ChevronLeft className="w-3 h-3" />
+        )}
       </button>
     </motion.aside>
   );

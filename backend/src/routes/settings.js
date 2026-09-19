@@ -1,56 +1,84 @@
+// backend/src/routes/settings.js
 import { Router } from "express";
 import { q } from "../db.js";
 import { requireAuth, requireRole } from "../middleware/auth.js";
+import { safeParseJSON, getZodError } from "../utils/helpers.js";
+import { logAudit } from "../utils/auditlog.js";
+import { safeError, validationError } from "../utils/errorResponse.js";
+import { ROLE_GROUPS } from "../utils/roles.js";
+import { updateSettingsSchema } from "../validators/businessValidator.js";
 
 const router = Router();
 router.use(requireAuth);
 
-// FIX: safe parse — kung object/number/boolean na (bagong mysql2 auto-parses
-// JSON columns), ibalik na lang siya diretso. Kung string pa, saka lang
-// natin i-JSON.parse. Iniiwasan nito yung "[object Object] is not valid JSON" crash.
-function safeParseJSON(value) {
-  if (value == null) return null;
-  if (typeof value === "object") return value;
-  if (typeof value !== "string") return value;
-  try {
-    return JSON.parse(value);
-  } catch {
-    return value;
-  }
-}
-
-// GET: pwedeng tingnan ng admin at hr_manager (i-adjust kung sino talaga ang dapat)
-router.get("/", requireRole("admin", "hr_manager"), async (req, res) => {
-  try {
-    const rows = await q(`
-      SELECT id, \`key\`, value, category, label, description
-      FROM settings
-      ORDER BY category, label
-    `);
-    const parsed = rows.map((r) => ({ ...r, value: safeParseJSON(r.value) }));
-    res.json(parsed);
-  } catch (err) {
-    console.error("GET /settings error:", err);
-    res.status(500).json({ error: err.sqlMessage ?? err.message ?? "Failed to fetch settings" });
-  }
-});
-
-// PATCH: "admin" lang ang pwedeng mag-edit ng system settings
-router.patch("/", requireRole("admin"), async (req, res) => {
-  try {
-    const { updates } = req.body;
-    if (!Array.isArray(updates) || updates.length === 0) {
-      return res.status(400).json({ error: "Kailangan ng updates array." });
+// GET /settings — ADMIN_AND_HR
+router.get(
+  "/",
+  requireRole(...ROLE_GROUPS.ADMIN_AND_HR),
+  async (req, res) => {
+    try {
+      const rows = await q(`
+        SELECT id, \`key\`, value, category, label, description
+        FROM settings
+        ORDER BY category, label
+      `);
+      const parsed = rows.map((r) => ({ ...r, value: safeParseJSON(r.value) }));
+      return res.json(parsed);
+    } catch (err) {
+      return safeError(res, err, "Failed to fetch settings.");
     }
-    for (const { key, value } of updates) {
-      await q(`UPDATE settings SET value = :value WHERE \`key\` = :key`, { value: JSON.stringify(value), key });
-    }
-    await q("INSERT INTO audit_logs (user_id, action, module, ip_address) VALUES (:uid,'update','settings',:ip)", { uid: req.user.id, ip: req.ip });
-    res.json({ ok: true });
-  } catch (err) {
-    console.error("PATCH /settings error:", err);
-    res.status(500).json({ error: err.sqlMessage ?? err.message ?? "Failed to update settings" });
   }
-});
+);
+
+// PATCH /settings — ADMIN_ONLY
+router.patch(
+  "/",
+  requireRole(...ROLE_GROUPS.ADMIN_ONLY),
+  async (req, res) => {
+    try {
+      const parsed = updateSettingsSchema.safeParse(req.body);
+      if (!parsed.success) return validationError(res, getZodError(parsed));
+      const { updates } = parsed.data;
+
+      const keys = updates.map((u) => u.key);
+      const placeholders = keys.map((_, i) => `:k${i}`).join(",");
+      const params = Object.fromEntries(keys.map((k, i) => [`k${i}`, k]));
+
+      const existingRows = await q(
+        `SELECT \`key\` FROM settings WHERE \`key\` IN (${placeholders})`,
+        params
+      );
+      const existingKeys = new Set(existingRows.map((r) => r.key));
+      const invalidKeys = keys.filter((k) => !existingKeys.has(k));
+
+      if (invalidKeys.length > 0) {
+        return validationError(
+          res,
+          `Invalid setting keys: ${invalidKeys.join(", ")}`
+        );
+      }
+
+      for (const { key, value } of updates) {
+        await q(`UPDATE settings SET value = :value WHERE \`key\` = :key`, {
+          value: JSON.stringify(value),
+          key,
+        });
+      }
+
+      await logAudit({
+        userId: req.user.id,
+        action: "update",
+        module: "settings",
+        recordId: null,
+        newValues: { keys },
+        ip: req.ip,
+      });
+
+      return res.json({ ok: true });
+    } catch (err) {
+      return safeError(res, err, "Failed to update settings.");
+    }
+  }
+);
 
 export default router;
