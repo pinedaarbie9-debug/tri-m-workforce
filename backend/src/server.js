@@ -1,4 +1,5 @@
 // backend/src/server.js
+
 // Last updated: 2026-09-19
 
 import express from "express";
@@ -14,8 +15,11 @@ dotenv.config();
 // ============================================================
 // 🔒 ENV VALIDATION — Bago mag-import ng routes
 // ============================================================
+
 const REQUIRED_ENV = ["JWT_SECRET", "DATABASE_URL"];
+
 const missing = REQUIRED_ENV.filter((key) => !process.env[key]);
+
 if (missing.length > 0) {
   console.error(`❌ Fatal: Missing required env vars: ${missing.join(", ")}`);
   process.exit(1);
@@ -33,6 +37,7 @@ console.log("🔧 Starting server.js...");
 // ============================================================
 // Route imports
 // ============================================================
+
 import authRoutes from "./routes/auth.js";
 import mfaRoutes from "./routes/mfa.js";
 import employeesRoutes from "./routes/employees.js";
@@ -61,11 +66,13 @@ const app = express();
 // ============================================================
 // 🔒 Trust proxy (kailangan para sa Railway)
 // ============================================================
+
 app.set("trust proxy", 1);
 
 // ============================================================
 // 🔒 HELMET — Security headers
 // ============================================================
+
 app.use(
   helmet({
     contentSecurityPolicy: {
@@ -87,13 +94,19 @@ app.use(
 // ============================================================
 // 🔒 CORS — Explicit origins, no wildcard in production
 // ============================================================
-const rawCors = process.env.CORS_ORIGIN ?? "http://localhost:5173";
+
+const rawCors =
+  process.env.CORS_ORIGIN ?? "http://localhost:5173";
+
 const allowedOrigins = rawCors
   .split(",")
   .map((o) => o.trim())
   .filter(Boolean);
 
-if (process.env.NODE_ENV === "production" && allowedOrigins.includes("*")) {
+if (
+  process.env.NODE_ENV === "production" &&
+  allowedOrigins.includes("*")
+) {
   console.error("❌ Fatal: Cannot use wildcard CORS in production.");
   process.exit(1);
 }
@@ -104,28 +117,50 @@ app.use(
   cors({
     origin: (origin, callback) => {
       if (!origin) return callback(null, true);
+
       if (allowedOrigins.includes(origin)) {
         return callback(null, true);
       }
-      console.warn(`⚠️  CORS blocked: ${origin}`);
-      return callback(new Error(`CORS: origin ${origin} not allowed`));
+
+      console.warn(`⚠️ CORS blocked: ${origin}`);
+
+      return callback(
+        new Error(`CORS: origin ${origin} not allowed`)
+      );
     },
+
     credentials: true,
-    methods: ["GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"],
+
+    methods: [
+      "GET",
+      "POST",
+      "PATCH",
+      "PUT",
+      "DELETE",
+      "OPTIONS",
+    ],
+
     // 🔒 Idinagdag ang "X-Requested-With" para sa CSRF protection
-    allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With"],
+    allowedHeaders: [
+      "Content-Type",
+      "Authorization",
+      "X-Requested-With",
+    ],
   })
 );
 
 // ============================================================
 // 🔒 RATE LIMITERS
 // ============================================================
+
 const generalLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 300,
   standardHeaders: true,
   legacyHeaders: false,
-  message: { error: "Too many requests. Please slow down." },
+  message: {
+    error: "Too many requests. Please slow down.",
+  },
 });
 
 const authLimiter = rateLimit({
@@ -133,7 +168,9 @@ const authLimiter = rateLimit({
   max: 10,
   standardHeaders: true,
   legacyHeaders: false,
-  message: { error: "Too many login attempts. Try again in 15 minutes." },
+  message: {
+    error: "Too many login attempts. Try again in 15 minutes.",
+  },
 });
 
 const faceLimiter = rateLimit({
@@ -141,7 +178,9 @@ const faceLimiter = rateLimit({
   max: 5,
   standardHeaders: true,
   legacyHeaders: false,
-  message: { error: "Too many face login attempts. Try again later." },
+  message: {
+    error: "Too many face login attempts. Try again later.",
+  },
 });
 
 app.use("/api", generalLimiter);
@@ -152,28 +191,44 @@ app.use("/api/auth/verify-mfa", authLimiter);
 // ============================================================
 // ADMS/iClock listener — BAGO ang express.json()
 // ============================================================
+
 app.use("/iclock", deviceAttendanceRoutes);
 
 // ============================================================
 // 🔒 BODY PARSERS
 // ============================================================
+
 app.use(express.json({ limit: "1mb" }));
-app.use(express.urlencoded({ extended: true, limit: "1mb" }));
+app.use(
+  express.urlencoded({
+    extended: true,
+    limit: "1mb",
+  })
+);
 
 // ============================================================
 // 🔒 CUSTOM JSON ERROR HANDLER
 // Hindi nag-le-leak ng parser position sa malformed JSON
 // ============================================================
+
 app.use((err, req, res, next) => {
-  if (err instanceof SyntaxError && err.status === 400 && "body" in err) {
-    return res.status(400).json({ error: "Invalid JSON in request body." });
+  if (
+    err instanceof SyntaxError &&
+    err.status === 400 &&
+    "body" in err
+  ) {
+    return res
+      .status(400)
+      .json({ error: "Invalid JSON in request body." });
   }
+
   next(err);
 });
 
 // ============================================================
 // API Routes
 // ============================================================
+
 app.use("/api/auth", authRoutes);
 app.use("/api/mfa", mfaRoutes);
 app.use("/api/employees", employeesRoutes);
@@ -189,13 +244,19 @@ app.use("/api/notifications", notificationsRoutes);
 app.use("/api/settings", settingsRoutes);
 app.use("/api/timesheets", timesheetsRoutes);
 app.use("/api/reports", reportsRoutes);
-app.use("/api/partner/attendance", partnerAttendanceRoutes);
+app.use(
+  "/api/partner/attendance",
+  partnerAttendanceRoutes
+);
 
-app.get("/api/health", (req, res) => res.json({ ok: true }));
+app.get("/api/health", (req, res) =>
+  res.json({ ok: true })
+);
 
 // ============================================================
 // Serve built frontend (Vite output)
 // ============================================================
+
 const frontendPath = path.join(__dirname, "../../dist");
 
 console.log("📁 Serving frontend from dist folder");
@@ -203,47 +264,67 @@ console.log("📁 Serving frontend from dist folder");
 app.use(express.static(frontendPath));
 
 // SPA fallback — hindi kasama ang /api at /iclock
-app.get(/^(?!\/api|\/iclock).*/, (req, res) => {
-  res.sendFile(path.join(frontendPath, "index.html"));
-});
+
+app.get(
+  /^(?!.*\/api|.*\/iclock).*/,
+  (req, res) => {
+    res.sendFile(path.join(frontendPath, "index.html"));
+  }
+);
 
 // ============================================================
 // 404 handler para sa /api routes
 // ============================================================
+
 app.use("/api", (req, res) => {
-  res.status(404).json({ error: "Endpoint not found." });
+  res.status(404).json({
+    error: "Endpoint not found.",
+  });
 });
 
 // ============================================================
 // 🔒 GLOBAL ERROR HANDLER — dapat laging PINAKAHULI
 // ============================================================
+
 app.use((err, req, res, next) => {
   console.error("❌ Express error handler:", err);
+
   if (process.env.NODE_ENV === "production") {
-    return res.status(500).json({ error: "Internal server error." });
+    return res
+      .status(500)
+      .json({ error: "Internal server error." });
   }
-  return res
-    .status(500)
-    .json({ error: err.message ?? "Internal server error." });
+
+  return res.status(500).json({
+    error: err.message ?? "Internal server error.",
+  });
 });
 
 // ============================================================
 // 🔒 PROCESS-LEVEL ERROR HANDLERS
 // ============================================================
+
 process.on("unhandledRejection", (err) => {
-  console.error("⚠️  Unhandled rejection:", err);
+  console.error("⚠️ Unhandled rejection:", err);
 });
 
 process.on("uncaughtException", (err) => {
-  console.error("❌ Uncaught exception — shutting down:", err);
+  console.error(
+    "❌ Uncaught exception — shutting down:",
+    err
+  );
+
   process.exit(1);
 });
 
 // ============================================================
 // START SERVER
 // ============================================================
+
 const PORT = process.env.PORT ?? 3000;
 
 app.listen(PORT, "0.0.0.0", () => {
-  console.log(`✅ Workforce API + Frontend running sa http://0.0.0.0:${PORT}`);
+  console.log(
+    `✅ Workforce API + Frontend running sa http://0.0.0.0:${PORT}`
+  );
 });
