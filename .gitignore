@@ -12,7 +12,6 @@ backend/node_modules/
 backend/.env
 
 # Build Output
-dist/
 build/
 backend/dist/
 
