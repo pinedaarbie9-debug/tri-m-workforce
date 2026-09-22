@@ -1,27 +1,38 @@
+// backend/src/settings.js
+// Helper function para kumuha ng settings mula sa DB
+
 import { q } from "./db.js";
 
-export async function getSetting(key, fallback = null) {
-  const rows = await q("SELECT value FROM settings WHERE `key` = :key LIMIT 1", { key });
-  if (!rows[0] || rows[0].value === null) return fallback;
+/**
+ * Kunin ang mga settings mula sa DB.
+ * @param {string[]} [keys] - Optional. Kung ibibigay, ito lang ang kukunin.
+ * @returns {Promise<Object>} - Object na may key-value pairs.
+ */
+export async function getSettings(keys = null) {
   try {
-    return JSON.parse(rows[0].value);
-  } catch {
-    return rows[0].value;
-  }
-}
-
-export async function getSettings(keys) {
-  const rows = await q(
-    `SELECT \`key\`, value FROM settings WHERE \`key\` IN (${keys.map((_, i) => `:k${i}`).join(",")})`,
-    Object.fromEntries(keys.map((k, i) => [`k${i}`, k]))
-  );
-  const result = {};
-  for (const row of rows) {
-    try {
-      result[row.key] = JSON.parse(row.value);
-    } catch {
-      result[row.key] = row.value;
+    let rows;
+    if (Array.isArray(keys) && keys.length > 0) {
+      const placeholders = keys.map((_, i) => `:k${i}`).join(",");
+      const params = Object.fromEntries(keys.map((k, i) => [`k${i}`, k]));
+      rows = await q(
+        `SELECT \`key\`, value FROM settings WHERE \`key\` IN (${placeholders})`,
+        params
+      );
+    } else {
+      rows = await q("SELECT `key`, value FROM settings");
     }
+
+    const result = {};
+    for (const row of rows) {
+      try {
+        result[row.key] = JSON.parse(row.value);
+      } catch {
+        result[row.key] = row.value;
+      }
+    }
+    return result;
+  } catch (err) {
+    console.error("❌ getSettings error:", err);
+    return {};
   }
-  return result;
 }

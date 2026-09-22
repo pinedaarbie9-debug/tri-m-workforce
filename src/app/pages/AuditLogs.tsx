@@ -2,6 +2,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { ClipboardList, Search, Download, ChevronLeft, ChevronRight, Loader2 } from "lucide-react";
 import { motion } from "motion/react";
+import { PasswordPrompt } from "../components/PasswordPrompt";
 import { api, exportToCsv } from "../../lib/api";
 
 const actionConfig: Record<string, { label: string; className: string }> = {
@@ -14,6 +15,8 @@ const actionConfig: Record<string, { label: string; className: string }> = {
   import: { label: "Import", className: "bg-cyan-100 text-cyan-700" },
   enable_mfa: { label: "Enable MFA", className: "bg-emerald-100 text-emerald-700" },
   disable_mfa: { label: "Disable MFA", className: "bg-red-100 text-red-700" },
+  verify_password: { label: "Verify Password", className: "bg-indigo-100 text-indigo-700" },
+  verify_password_failed: { label: "Verify Failed", className: "bg-red-100 text-red-700" },
 };
 
 const fallbackActionConfig = { label: "Unknown", className: "bg-gray-100 text-gray-500" };
@@ -56,6 +59,8 @@ function buildDescription(log: any): string {
   if (log?.action === "logout") return "User logged out";
   if (log?.action === "enable_mfa") return "Enabled two-factor authentication";
   if (log?.action === "disable_mfa") return "Disabled two-factor authentication";
+  if (log?.action === "verify_password") return "Verified password for sensitive action";
+  if (log?.action === "verify_password_failed") return "Failed password verification";
 
   const name = getRecordLabel(log);
   const shortId = log?.record_id ? `#${String(log.record_id).slice(0, 8)}` : null;
@@ -77,6 +82,10 @@ export function AuditLogsPage() {
   const [actionFilter, setActionFilter] = useState<string>("all");
   const [page, setPage] = useState(1);
   const perPage = 7;
+
+  // 🔒 Password prompt state
+  const [showPasswordPrompt, setShowPasswordPrompt] = useState(false);
+  const [pendingAction, setPendingAction] = useState<(() => void) | null>(null);
 
   const fetchLogs = useCallback(async (showSpinner = true) => {
     if (showSpinner) setLoading(true);
@@ -124,21 +133,25 @@ export function AuditLogsPage() {
   }, [totalPages, page]);
 
   function handleExport() {
-    exportToCsv(
-      "audit_logs",
-      filtered.map((log) => ({
-        user: getUserName(log),
-        email: getUserEmail(log),
-        role: getUserRole(log) ?? "",
-        action: log?.action ?? "",
-        module: log?.module ?? "",
-        record_name: getRecordLabel(log) ?? "",
-        record_id: log?.record_id ?? "",
-        description: buildDescription(log),
-        ip_address: log?.ip_address ?? "",
-        timestamp: log?.created_at ? new Date(log.created_at).toLocaleString() : "",
-      }))
-    );
+    // 🔒 Hilingin ang password bago mag-export
+    setPendingAction(() => () => {
+      exportToCsv(
+        "audit_logs",
+        filtered.map((log) => ({
+          user: getUserName(log),
+          email: getUserEmail(log),
+          role: getUserRole(log) ?? "",
+          action: log?.action ?? "",
+          module: log?.module ?? "",
+          record_name: getRecordLabel(log) ?? "",
+          record_id: log?.record_id ?? "",
+          description: buildDescription(log),
+          ip_address: log?.ip_address ?? "",
+          timestamp: log?.created_at ? new Date(log.created_at).toLocaleString() : "",
+        }))
+      );
+    });
+    setShowPasswordPrompt(true);
   }
 
   return (
@@ -176,6 +189,8 @@ export function AuditLogsPage() {
             <option value="logout">Logout</option>
             <option value="enable_mfa">Enable MFA</option>
             <option value="disable_mfa">Disable MFA</option>
+            <option value="verify_password">Verify Password</option>
+            <option value="verify_password_failed">Verify Failed</option>
             <option value="export">Export</option>
             <option value="import">Import</option>
           </select>
@@ -271,6 +286,20 @@ export function AuditLogsPage() {
           </div>
         </div>
       )}
+
+      {/* 🔒 Password Prompt */}
+      <PasswordPrompt
+        open={showPasswordPrompt}
+        title="Export Audit Logs"
+        description="Enter your password to download the audit logs."
+        onClose={() => {
+          setShowPasswordPrompt(false);
+          setPendingAction(null);
+        }}
+        onSuccess={async () => {
+          if (pendingAction) await pendingAction();
+        }}
+      />
     </div>
   );
 }

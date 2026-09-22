@@ -266,7 +266,8 @@ router.post(
           phone: phone ?? null,
           job_title: job_title ?? null,
           department_id: department_id || null,
-          employment_type: employment_type ?? "full_time",
+          // 🔒 DEFAULT "regular" kapag walang binigay
+          employment_type: employment_type ?? "regular",
           status: status ?? "active",
           hire_date: hire_date || new Date().toISOString().slice(0, 10),
         }

@@ -1,5 +1,6 @@
 // backend/src/routes/settings.js
 import { Router } from "express";
+import bcrypt from "bcryptjs";
 import { q } from "../db.js";
 import { requireAuth, requireRole } from "../middleware/auth.js";
 import { safeParseJSON, getZodError } from "../utils/helpers.js";
@@ -22,7 +23,13 @@ router.get(
         FROM settings
         ORDER BY category, label
       `);
-      const parsed = rows.map((r) => ({ ...r, value: safeParseJSON(r.value) }));
+      const parsed = rows.map((r) => {
+        // 🔒 Huwag i-return ang value ng file_export_password_hash
+        if (r.key === "file_export_password_hash") {
+          return { ...r, value: "" };
+        }
+        return { ...r, value: safeParseJSON(r.value) };
+      });
       return res.json(parsed);
     } catch (err) {
       return safeError(res, err, "Failed to fetch settings.");
@@ -49,16 +56,50 @@ router.patch(
         params
       );
       const existingKeys = new Set(existingRows.map((r) => r.key));
-      const invalidKeys = keys.filter((k) => !existingKeys.has(k));
-
-      if (invalidKeys.length > 0) {
-        return validationError(
-          res,
-          `Invalid setting keys: ${invalidKeys.join(", ")}`
-        );
-      }
 
       for (const { key, value } of updates) {
+        // 🔒 SPECIAL HANDLING: File Export Password
+        // Kahit wala pa sa DB, payagan ito
+        if (key === "file_export_password") {
+          const plainPassword = String(value ?? "").trim();
+
+          if (plainPassword.length < 4) {
+            return validationError(
+              res,
+              "File export password must be at least 4 characters."
+            );
+          }
+
+          // 🔒 HASH gamit ang bcrypt
+          const hashed = await bcrypt.hash(plainPassword, 10);
+          console.log("🔒 [settings.js] File password HASHED:", hashed.substring(0, 20) + "...");
+
+          // I-check kung existing ang file_export_password_hash
+          const existing = await q(
+            "SELECT `key` FROM settings WHERE `key` = 'file_export_password_hash' LIMIT 1"
+          );
+
+          if (existing[0]) {
+            await q(
+              "UPDATE settings SET value = :value, updated_at = NOW() WHERE `key` = 'file_export_password_hash'",
+              { value: JSON.stringify(hashed) }
+            );
+            console.log("🔒 [settings.js] File password UPDATED");
+          } else {
+            await q(
+              "INSERT INTO settings (`key`, value, category, label, description) VALUES ('file_export_password_hash', :value, 'general', 'File Export Password', 'Password required before downloading any exported file')",
+              { value: JSON.stringify(hashed) }
+            );
+            console.log("🔒 [settings.js] File password INSERTED");
+          }
+          continue;
+        }
+
+        // 🔒 NORMAL SETTINGS — kailangan existing sa DB
+        if (!existingKeys.has(key)) {
+          return validationError(res, `Invalid setting keys: ${key}`);
+        }
+
         await q(`UPDATE settings SET value = :value WHERE \`key\` = :key`, {
           value: JSON.stringify(value),
           key,

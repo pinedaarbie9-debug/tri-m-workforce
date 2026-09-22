@@ -9,6 +9,7 @@ import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
 } from "../components/ui/dropdown-menu";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../components/ui/dialog";
+import { PasswordPrompt } from "../components/PasswordPrompt";
 import { api, exportToCsv } from "../../lib/api";
 import type { Employee, EmployeeStatus, EmploymentType } from "../../types";
 
@@ -20,10 +21,10 @@ const statusBadge: Record<EmployeeStatus, { label: string; className: string }> 
 };
 
 const typeBadge: Record<EmploymentType, string> = {
-  full_time: "bg-blue-100 text-blue-700",
-  part_time: "bg-purple-100 text-purple-700",
-  contract:  "bg-orange-100 text-orange-700",
-  intern:    "bg-pink-100 text-pink-700",
+  regular:       "bg-blue-100 text-blue-700",
+  part_time:     "bg-purple-100 text-purple-700",
+  contract:      "bg-orange-100 text-orange-700",
+  probationary:  "bg-pink-100 text-pink-700",
 };
 
 function getDeptName(emp: Employee): string {
@@ -56,12 +57,11 @@ const emptyForm = {
   phone: "",
   job_title: "",
   department_id: "",
-  employment_type: "full_time" as EmploymentType,
+  employment_type: "regular" as EmploymentType,
   status: "active" as EmployeeStatus,
   hire_date: "",
 };
 
-// 🔒 Field error type
 type FieldErrors = Record<string, string>;
 
 export function EmployeesPage() {
@@ -88,6 +88,10 @@ export function EmployeesPage() {
   const [editSaving, setEditSaving] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);
   const [editFieldErrors, setEditFieldErrors] = useState<FieldErrors>({});
+
+  // 🔒 Password prompt — para lang sa DOWNLOAD ng CSV
+  const [showPasswordPrompt, setShowPasswordPrompt] = useState(false);
+  const [pendingDownload, setPendingDownload] = useState<(() => void) | null>(null);
 
   const fetchEmployees = useCallback(async (showSpinner = true) => {
     if (showSpinner) setLoading(true);
@@ -123,20 +127,24 @@ export function EmployeesPage() {
   const paginated = filtered.slice((page - 1) * perPage, page * perPage);
   const totalPages = Math.max(1, Math.ceil(filtered.length / perPage));
 
+  // 🔒 Export — WITH password
   function handleExport() {
-    exportToCsv(
-      "employees",
-      filtered.map((e) => ({
-        employee_code: e.employee_code,
-        full_name: e.full_name,
-        email: e.email,
-        department: getDeptName(e),
-        job_title: e.job_title,
-        employment_type: e.employment_type,
-        status: e.status,
-        hire_date: e.hire_date,
-      }))
-    );
+    setPendingDownload(() => () => {
+      exportToCsv(
+        "employees",
+        filtered.map((e) => ({
+          employee_code: e.employee_code,
+          full_name: e.full_name,
+          email: e.email,
+          department: getDeptName(e),
+          job_title: e.job_title,
+          employment_type: e.employment_type,
+          status: e.status,
+          hire_date: e.hire_date,
+        }))
+      );
+    });
+    setShowPasswordPrompt(true);
   }
 
   function openAddModal() {
@@ -150,7 +158,6 @@ export function EmployeesPage() {
     setForm((f) => ({ ...f, employee_code: generateEmployeeCode(employees) }));
   }
 
-  // 🔒 Validate employee form
   function validateEmployeeForm(data: typeof emptyForm, isEdit = false): FieldErrors {
     const errors: FieldErrors = {};
 
@@ -179,7 +186,6 @@ export function EmployeesPage() {
     e.preventDefault();
     setFormError(null);
 
-    // 🔒 Validate lahat ng required fields
     const errors = validateEmployeeForm(form);
     setFieldErrors(errors);
 
@@ -198,7 +204,7 @@ export function EmployeesPage() {
         phone: form.phone.trim() || null,
         job_title: form.job_title.trim() || null,
         department_id: form.department_id || null,
-        hire_date: form.hire_date, // Required na ngayon
+        hire_date: form.hire_date,
       });
       setShowAddModal(false);
       setForm(emptyForm);
@@ -242,7 +248,6 @@ export function EmployeesPage() {
 
     if (!editingEmployee) return;
 
-    // 🔒 Validate edit form
     const errors = validateEmployeeForm(editForm, true);
     setEditFieldErrors(errors);
 
@@ -262,7 +267,7 @@ export function EmployeesPage() {
         department_id: editForm.department_id || null,
         employment_type: editForm.employment_type,
         status: editForm.status,
-        hire_date: editForm.hire_date, // Required na ngayon
+        hire_date: editForm.hire_date,
       });
       closeEditModal();
       fetchEmployees(false);
@@ -425,7 +430,7 @@ export function EmployeesPage() {
         </div>
       )}
 
-      {/* View Profile modal */}
+      {/* View Profile */}
       <Dialog open={Boolean(selected)} onOpenChange={() => setSelected(null)}>
         <DialogContent className="sm:max-w-md max-h-[85vh] overflow-y-auto">
           <DialogHeader><DialogTitle>Employee Profile</DialogTitle></DialogHeader>
@@ -456,7 +461,7 @@ export function EmployeesPage() {
         </DialogContent>
       </Dialog>
 
-      {/* Add Employee modal */}
+      {/* Add Employee */}
       <Dialog open={showAddModal} onOpenChange={setShowAddModal}>
         <DialogContent className="sm:max-w-md max-h-[85vh] overflow-y-auto">
           <DialogHeader><DialogTitle>Add Employee</DialogTitle></DialogHeader>
@@ -478,9 +483,7 @@ export function EmployeesPage() {
 
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
-                <label className="text-sm font-medium text-foreground">
-                  First Name <span className="text-destructive">*</span>
-                </label>
+                <label className="text-sm font-medium text-foreground">First Name <span className="text-destructive">*</span></label>
                 <input value={form.first_name} onChange={(e) => {
                   setForm({ ...form, first_name: e.target.value });
                   if (fieldErrors.first_name) setFieldErrors((prev) => ({ ...prev, first_name: "" }));
@@ -490,9 +493,7 @@ export function EmployeesPage() {
                 {fieldErrors.first_name && <p className="text-xs text-destructive">{fieldErrors.first_name}</p>}
               </div>
               <div className="space-y-1.5">
-                <label className="text-sm font-medium text-foreground">
-                  Last Name <span className="text-destructive">*</span>
-                </label>
+                <label className="text-sm font-medium text-foreground">Last Name <span className="text-destructive">*</span></label>
                 <input value={form.last_name} onChange={(e) => {
                   setForm({ ...form, last_name: e.target.value });
                   if (fieldErrors.last_name) setFieldErrors((prev) => ({ ...prev, last_name: "" }));
@@ -504,9 +505,7 @@ export function EmployeesPage() {
             </div>
 
             <div className="space-y-1.5">
-              <label className="text-sm font-medium text-foreground">
-                Email <span className="text-destructive">*</span>
-              </label>
+              <label className="text-sm font-medium text-foreground">Email <span className="text-destructive">*</span></label>
               <input type="email" value={form.email} onChange={(e) => {
                 setForm({ ...form, email: e.target.value });
                 if (fieldErrors.email) setFieldErrors((prev) => ({ ...prev, email: "" }));
@@ -544,10 +543,10 @@ export function EmployeesPage() {
                 <label className="text-sm font-medium text-foreground">Employment Type</label>
                 <select value={form.employment_type} onChange={(e) => setForm({ ...form, employment_type: e.target.value as EmploymentType })}
                   className="w-full px-3.5 py-2.5 rounded-lg border border-border bg-input-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/20">
-                  <option value="full_time">Full Time</option>
-                  <option value="part_time">Part Time</option>
-                  <option value="contract">Contract</option>
-                  <option value="intern">Intern</option>
+                  <option value="regular">Regular (Full-Time)</option>
+                  <option value="part_time">Part-Time</option>
+                  <option value="contract">Contractual</option>
+                  <option value="probationary">Probationary</option>
                 </select>
               </div>
               <div className="space-y-1.5">
@@ -563,9 +562,7 @@ export function EmployeesPage() {
             </div>
 
             <div className="space-y-1.5">
-              <label className="text-sm font-medium text-foreground">
-                Hire Date <span className="text-destructive">*</span>
-              </label>
+              <label className="text-sm font-medium text-foreground">Hire Date <span className="text-destructive">*</span></label>
               <input type="date" value={form.hire_date} onChange={(e) => {
                 setForm({ ...form, hire_date: e.target.value });
                 if (fieldErrors.hire_date) setFieldErrors((prev) => ({ ...prev, hire_date: "" }));
@@ -584,7 +581,7 @@ export function EmployeesPage() {
         </DialogContent>
       </Dialog>
 
-      {/* Edit Employee modal */}
+      {/* Edit Employee */}
       <Dialog open={showEditModal} onOpenChange={(open) => { if (!open) closeEditModal(); }}>
         <DialogContent className="sm:max-w-md max-h-[85vh] overflow-y-auto">
           <DialogHeader><DialogTitle>Edit Employee</DialogTitle></DialogHeader>
@@ -600,9 +597,7 @@ export function EmployeesPage() {
 
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
-                <label className="text-sm font-medium text-foreground">
-                  First Name <span className="text-destructive">*</span>
-                </label>
+                <label className="text-sm font-medium text-foreground">First Name <span className="text-destructive">*</span></label>
                 <input value={editForm.first_name} onChange={(e) => {
                   setEditForm({ ...editForm, first_name: e.target.value });
                   if (editFieldErrors.first_name) setEditFieldErrors((prev) => ({ ...prev, first_name: "" }));
@@ -611,9 +606,7 @@ export function EmployeesPage() {
                 {editFieldErrors.first_name && <p className="text-xs text-destructive">{editFieldErrors.first_name}</p>}
               </div>
               <div className="space-y-1.5">
-                <label className="text-sm font-medium text-foreground">
-                  Last Name <span className="text-destructive">*</span>
-                </label>
+                <label className="text-sm font-medium text-foreground">Last Name <span className="text-destructive">*</span></label>
                 <input value={editForm.last_name} onChange={(e) => {
                   setEditForm({ ...editForm, last_name: e.target.value });
                   if (editFieldErrors.last_name) setEditFieldErrors((prev) => ({ ...prev, last_name: "" }));
@@ -624,9 +617,7 @@ export function EmployeesPage() {
             </div>
 
             <div className="space-y-1.5">
-              <label className="text-sm font-medium text-foreground">
-                Email <span className="text-destructive">*</span>
-              </label>
+              <label className="text-sm font-medium text-foreground">Email <span className="text-destructive">*</span></label>
               <input type="email" value={editForm.email} onChange={(e) => {
                 setEditForm({ ...editForm, email: e.target.value });
                 if (editFieldErrors.email) setEditFieldErrors((prev) => ({ ...prev, email: "" }));
@@ -663,10 +654,10 @@ export function EmployeesPage() {
                 <label className="text-sm font-medium text-foreground">Employment Type</label>
                 <select value={editForm.employment_type} onChange={(e) => setEditForm({ ...editForm, employment_type: e.target.value as EmploymentType })}
                   className="w-full px-3.5 py-2.5 rounded-lg border border-border bg-input-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/20">
-                  <option value="full_time">Full Time</option>
-                  <option value="part_time">Part Time</option>
-                  <option value="contract">Contract</option>
-                  <option value="intern">Intern</option>
+                  <option value="regular">Regular (Full-Time)</option>
+                  <option value="part_time">Part-Time</option>
+                  <option value="contract">Contractual</option>
+                  <option value="probationary">Probationary</option>
                 </select>
               </div>
               <div className="space-y-1.5">
@@ -682,9 +673,7 @@ export function EmployeesPage() {
             </div>
 
             <div className="space-y-1.5">
-              <label className="text-sm font-medium text-foreground">
-                Hire Date <span className="text-destructive">*</span>
-              </label>
+              <label className="text-sm font-medium text-foreground">Hire Date <span className="text-destructive">*</span></label>
               <input type="date" value={editForm.hire_date} onChange={(e) => {
                 setEditForm({ ...editForm, hire_date: e.target.value });
                 if (editFieldErrors.hire_date) setEditFieldErrors((prev) => ({ ...prev, hire_date: "" }));
@@ -702,6 +691,20 @@ export function EmployeesPage() {
           </form>
         </DialogContent>
       </Dialog>
+
+      {/* 🔒 Password Prompt — DOWNLOAD lang */}
+      <PasswordPrompt
+        open={showPasswordPrompt}
+        title="Export Employees"
+        description="Enter the file export password to download the employee list."
+        onClose={() => {
+          setShowPasswordPrompt(false);
+          setPendingDownload(null);
+        }}
+        onSuccess={async () => {
+          if (pendingDownload) pendingDownload();
+        }}
+      />
     </div>
   );
 }

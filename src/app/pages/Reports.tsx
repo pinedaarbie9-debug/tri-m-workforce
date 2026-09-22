@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 import { FileText, Download, RefreshCw, CheckCircle2, Clock, AlertCircle, BarChart3, Users, CalendarDays, FileSpreadsheet, Printer } from "lucide-react";
 import { motion } from "motion/react";
 import { api, exportToCsv } from "../../lib/api";
+import { PasswordPrompt } from "../components/PasswordPrompt";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 
@@ -113,6 +114,12 @@ export function ReportsPage() {
   const [summary, setSummary] = useState({ totalReports: 6, ready: 0 });
   const [currentUserName, setCurrentUserName] = useState("System");
 
+  // 🔒 Password prompt state
+  const [showPasswordPrompt, setShowPasswordPrompt] = useState(false);
+  const [pendingAction, setPendingAction] = useState<(() => void) | null>(null);
+  const [promptTitle, setPromptTitle] = useState("Password Required");
+  const [promptDescription, setPromptDescription] = useState("");
+
   const loadSummary = useCallback(async () => {
     try {
       const data = await api.getReportsSummary();
@@ -126,6 +133,13 @@ export function ReportsPage() {
     loadSummary();
     api.me().then((user) => setCurrentUserName(user?.full_name ?? "System")).catch(() => {});
   }, [loadSummary]);
+
+  function requirePassword(title: string, description: string, action: () => void) {
+    setPromptTitle(title);
+    setPromptDescription(description);
+    setPendingAction(() => action);
+    setShowPasswordPrompt(true);
+  }
 
   async function handleGenerate(tpl: typeof reportTemplates[number]) {
     setGenerating(tpl.id);
@@ -146,8 +160,13 @@ export function ReportsPage() {
       };
       setReports((prev) => [newReport, ...prev]);
 
+      // 🔒 Hilingin ang password bago mag-download ng CSV
       if (rows.length) {
-        exportToCsv(`${tpl.id}-${Date.now()}`, rows);
+        requirePassword(
+          "Download Report",
+          `Enter your password to download "${tpl.label}" as CSV.`,
+          () => exportToCsv(`${tpl.id}-${Date.now()}`, rows)
+        );
       } else {
         console.info(`${tpl.label}: generated successfully but no rows found for this period.`);
       }
@@ -176,7 +195,11 @@ export function ReportsPage() {
       alert("No data available for this report. Please generate a new one.");
       return;
     }
-    exportToPdf(report.name, report.rows, report.type, report.generated_by);
+    requirePassword(
+      "Download PDF",
+      `Enter your password to download "${report.name}" as PDF.`,
+      () => exportToPdf(report.name, report.rows!, report.type, report.generated_by)
+    );
   }
 
   function handleDownloadCsv(report: GeneratedReport) {
@@ -184,7 +207,11 @@ export function ReportsPage() {
       alert("No data available for this report.");
       return;
     }
-    exportToCsv(report.name.replace(/[^a-z0-9]/gi, "_").toLowerCase(), report.rows);
+    requirePassword(
+      "Download CSV",
+      `Enter your password to download "${report.name}" as CSV.`,
+      () => exportToCsv(report.name.replace(/[^a-z0-9]/gi, "_").toLowerCase(), report.rows!)
+    );
   }
 
   return (
@@ -317,6 +344,20 @@ export function ReportsPage() {
           </div>
         </div>
       </div>
+
+      {/* 🔒 Password Prompt */}
+      <PasswordPrompt
+        open={showPasswordPrompt}
+        title={promptTitle}
+        description={promptDescription}
+        onClose={() => {
+          setShowPasswordPrompt(false);
+          setPendingAction(null);
+        }}
+        onSuccess={async () => {
+          if (pendingAction) await pendingAction();
+        }}
+      />
     </div>
   );
 }

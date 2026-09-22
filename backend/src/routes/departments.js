@@ -145,6 +145,11 @@ router.patch("/:id", requireRole("admin", "manager"), async (req, res) => {
 
 // ============================================================
 // DELETE /departments/:id — admin only
+// 
+// RULES:
+// - Kung may ACTIVE employees (status = 'active' AND deleted_at IS NULL) → BLOCK
+// - Kung may SOFT-DELETED employees (deleted_at IS NOT NULL) → AUTO-UNASSIGN, tapos delete
+// - Kung may INACTIVE/SUSPENDED employees → BLOCK para safe
 // ============================================================
 router.delete("/:id", requireRole("admin"), async (req, res) => {
   try {
@@ -152,19 +157,60 @@ router.delete("/:id", requireRole("admin"), async (req, res) => {
       "SELECT id, name FROM departments WHERE id = :id",
       { id: req.params.id }
     );
-    if (!existing[0]) return res.status(404).json({ error: "Department not found." });
+    if (!existing[0]) {
+      return res.status(404).json({ error: "Department not found." });
+    }
 
-    const headcount = await q(
-      "SELECT COUNT(*) AS count FROM employees WHERE department_id = :id AND deleted_at IS NULL",
+    // 🔒 Check 1: Active employees (status = 'active', hindi deleted)
+    const activeCheck = await q(
+      `SELECT COUNT(*) AS count FROM employees 
+       WHERE department_id = :id 
+         AND deleted_at IS NULL 
+         AND status = 'active'`,
       { id: req.params.id }
     );
-    if ((headcount[0]?.count ?? 0) > 0) {
+    if ((activeCheck[0]?.count ?? 0) > 0) {
       return validationError(
         res,
-        `Cannot delete department — ${headcount[0].count} employee(s) still assigned. Reassign them first.`
+        `Cannot delete department — ${activeCheck[0].count} active employee(s) still assigned. Reassign them first.`
       );
     }
 
+    // 🔒 Check 2: Inactive/Suspended employees (hindi deleted pero hindi active)
+    const inactiveCheck = await q(
+      `SELECT COUNT(*) AS count FROM employees 
+       WHERE department_id = :id 
+         AND deleted_at IS NULL 
+         AND status != 'active'`,
+      { id: req.params.id }
+    );
+    if ((inactiveCheck[0]?.count ?? 0) > 0) {
+      return validationError(
+        res,
+        `Cannot delete department — ${inactiveCheck[0].count} inactive/suspended employee(s) still assigned. Reassign them first.`
+      );
+    }
+
+    // 🔒 Check 3: Soft-deleted employees (deleted_at IS NOT NULL)
+    // I-unassign sila automatic bago i-delete ang department
+    const softDeletedCheck = await q(
+      `SELECT COUNT(*) AS count FROM employees 
+       WHERE department_id = :id 
+         AND deleted_at IS NOT NULL`,
+      { id: req.params.id }
+    );
+    const softDeletedCount = softDeletedCheck[0]?.count ?? 0;
+
+    if (softDeletedCount > 0) {
+      // 🔒 Auto-unassign ang soft-deleted employees
+      await q(
+        "UPDATE employees SET department_id = NULL WHERE department_id = :id AND deleted_at IS NOT NULL",
+        { id: req.params.id }
+      );
+      console.log(`✅ [departments.js] Unassigned ${softDeletedCount} soft-deleted employee(s) from department ${existing[0].name}`);
+    }
+
+    // ✅ Ngayon safe nang i-delete ang department
     await q("DELETE FROM departments WHERE id = :id", { id: req.params.id });
 
     await logAudit({
@@ -172,11 +218,17 @@ router.delete("/:id", requireRole("admin"), async (req, res) => {
       action: "delete",
       module: "departments",
       recordId: req.params.id,
-      oldValues: { name: existing[0].name },
+      oldValues: {
+        name: existing[0].name,
+        soft_deleted_unassigned: softDeletedCount,
+      },
       ip: req.ip,
     });
 
-    return res.json({ ok: true });
+    return res.json({
+      ok: true,
+      unassigned_soft_deleted: softDeletedCount,
+    });
   } catch (err) {
     return safeError(res, err, "Failed to delete department.");
   }

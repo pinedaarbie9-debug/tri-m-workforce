@@ -1,3 +1,4 @@
+// src/app/pages/Timesheets.tsx
 import { useState, useEffect, useCallback } from "react";
 import { FileSpreadsheet, Search, CheckCircle2, Clock, Send, ChevronLeft, ChevronRight, XCircle, Loader2, Plus } from "lucide-react";
 import { motion } from "motion/react";
@@ -218,10 +219,10 @@ export function TimesheetsPage() {
                         <td className="px-4 sm:px-5 py-4">
                           {ts.status === "submitted" && (
                             <div className="flex items-center gap-1">
-                              <button onClick={() => handleDecision(ts.id, "approved")} className="w-6 h-6 rounded-full bg-emerald-100 flex items-center justify-center hover:bg-emerald-200 transition-colors">
+                              <button onClick={() => handleDecision(ts.id, "approved")} className="w-6 h-6 rounded-full bg-emerald-100 flex items-center justify-center hover:bg-emerald-200 transition-colors" title="Approve">
                                 <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
                               </button>
-                              <button onClick={() => handleDecision(ts.id, "rejected")} className="w-6 h-6 rounded-full bg-red-100 flex items-center justify-center hover:bg-red-200 transition-colors">
+                              <button onClick={() => handleDecision(ts.id, "rejected")} className="w-6 h-6 rounded-full bg-red-100 flex items-center justify-center hover:bg-red-200 transition-colors" title="Reject">
                                 <XCircle className="w-3.5 h-3.5 text-red-600" />
                               </button>
                             </div>
@@ -261,9 +262,7 @@ export function TimesheetsPage() {
               <select value={form.employee_id} onChange={(e) => setForm({ ...form, employee_id: e.target.value })}
                 className="w-full px-3.5 py-2.5 rounded-lg border border-border bg-input-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/20">
                 <option value="">Select employee</option>
-                {employees.map((emp) => (
-                  <option key={emp.id} value={emp.id}>{emp.full_name}</option>
-                ))}
+                {employees.map((emp) => (<option key={emp.id} value={emp.id}>{emp.full_name}</option>))}
               </select>
             </div>
             <div className="grid grid-cols-2 gap-3">

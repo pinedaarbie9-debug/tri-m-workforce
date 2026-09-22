@@ -14,18 +14,18 @@ const API_URL = (() => {
   return "http://localhost:4000/api";
 })();
 
-// 🔒 Huwag i-log ang API URL sa production
 if (!import.meta.env.PROD) {
   console.log("🌐 API_URL:", API_URL);
 }
 
 // ============================================================
-// 🔒 Token Management — sessionStorage para sa XSS protection
+// 🔒 Session Timeout Configuration — 3 MINUTES
 // ============================================================
 const TOKEN_KEY = "wms_token";
 const SESSION_START_KEY = "wms_session_start";
 const LAST_ACTIVITY_KEY = "wms_last_activity";
-const SESSION_TIMEOUT_MS = 10 * 60 * 1000; // 🔒 10 minutes idle
+const SESSION_TIMEOUT_MS = 3 * 60 * 1000;
+
 function getToken(): string | null {
   return sessionStorage.getItem(TOKEN_KEY);
 }
@@ -42,18 +42,69 @@ export function setToken(token: string | null) {
   }
 }
 
-// 🔒 Update last activity timestamp
 export function touchActivity() {
   if (getToken()) {
     sessionStorage.setItem(LAST_ACTIVITY_KEY, Date.now().toString());
   }
 }
 
-// 🔒 Check kung expired na ang session dahil sa idle
 export function isSessionExpired(): boolean {
   const lastActivity = sessionStorage.getItem(LAST_ACTIVITY_KEY);
   if (!lastActivity) return false;
   return Date.now() - Number(lastActivity) > SESSION_TIMEOUT_MS;
+}
+
+// ============================================================
+// 🔒 Attach activity listeners
+// ============================================================
+let activityListenerAttached = false;
+let activityCheckInterval: ReturnType<typeof setInterval> | null = null;
+
+export function attachActivityListeners(onExpired: () => void) {
+  if (activityListenerAttached) return;
+  activityListenerAttached = true;
+
+  const updateActivity = () => {
+    if (getToken()) {
+      sessionStorage.setItem(LAST_ACTIVITY_KEY, Date.now().toString());
+    }
+  };
+
+  const events = [
+    "mousedown",
+    "mousemove",
+    "keydown",
+    "scroll",
+    "touchstart",
+    "click",
+    "wheel",
+  ];
+  events.forEach((evt) => {
+    window.addEventListener(evt, updateActivity, { passive: true });
+  });
+
+  activityCheckInterval = setInterval(() => {
+    if (isSessionExpired()) {
+      activityListenerAttached = false;
+      if (activityCheckInterval) {
+        clearInterval(activityCheckInterval);
+        activityCheckInterval = null;
+      }
+      onExpired();
+    }
+  }, 15000);
+
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible" && isSessionExpired()) {
+      onExpired();
+    }
+  });
+
+  window.addEventListener("focus", () => {
+    if (isSessionExpired()) {
+      onExpired();
+    }
+  });
 }
 
 // ============================================================
@@ -81,10 +132,9 @@ export class ApiError extends Error {
 // ============================================================
 // 🔒 Secure Request Wrapper
 // ============================================================
-const REQUEST_TIMEOUT_MS = 30 * 1000; // 30s
+const REQUEST_TIMEOUT_MS = 30 * 1000;
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
-  // 🔒 Check idle timeout
   if (isSessionExpired()) {
     setToken(null);
     if (typeof window !== "undefined") {
@@ -96,7 +146,6 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const token = getToken();
   const url = `${API_URL}${path}`;
 
-  // 🔒 Abort controller para sa timeout
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
 
@@ -115,14 +164,13 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 
     clearTimeout(timeoutId);
 
-    // 🔒 Auto-logout sa 401
     if (res.status === 401) {
       setToken(null);
       if (
         typeof window !== "undefined" &&
         !window.location.pathname.includes("/login")
       ) {
-        window.location.href = "/login";
+        window.location.href = "/login?expired=1";
       }
       const body = await res.json().catch(() => ({}));
       throw new ApiError(
@@ -143,7 +191,6 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
       );
     }
 
-    // 🔒 Update activity on success
     touchActivity();
 
     if (res.status === 204) return undefined as T;
@@ -191,7 +238,17 @@ export const api = {
     }),
   me: () => request<any>("/auth/me"),
   logout: () => request<{ ok: true }>("/auth/logout", { method: "POST" }),
-
+ verifyPassword: (password: string) =>
+    request<{ ok: true }>("/auth/verify-password", {
+      method: "POST",
+      body: JSON.stringify({ password }),
+    }),
+  // 🔒 File export password verification
+  verifyFilePassword: (password: string) =>
+    request<{ ok: true }>("/auth/verify-file-password", {
+      method: "POST",
+      body: JSON.stringify({ password }),
+    }),
   // ---- MFA ----
   mfaStatus: () => request<{ mfa_enabled: boolean }>("/mfa/status"),
   mfaSetup: () =>
@@ -282,6 +339,10 @@ export const api = {
       method: "PATCH",
       body: JSON.stringify({ status }),
     }),
+  getLeaveAttachment: (id: string) =>
+    request<{ data: string; name: string; type: string; size: number }>(
+      `/leave-requests/${id}/attachment`
+    ),
 
   // ---- Biometric ----
   getBiometricCredentials: () => request<any[]>("/biometric-credentials"),
@@ -451,7 +512,7 @@ export const api = {
 };
 
 // ============================================================
-// 🔒 CSV Export Helper — may sanitization
+// 🔒 CSV Export Helper
 // ============================================================
 export function exportToCsv(filename: string, rows: Record<string, any>[]) {
   if (!rows || rows.length === 0) {
@@ -466,9 +527,7 @@ export function exportToCsv(filename: string, rows: Record<string, any>[]) {
       headers
         .map((h) => {
           const val = row[h] ?? "";
-          // 🔒 Sanitize para sa CSV injection
           let str = String(val).replace(/"/g, '""');
-          // 🔒 Pigilan ang formula injection (=, +, -, @)
           if (/^[=+\-@]/.test(str)) {
             str = "'" + str;
           }
@@ -484,7 +543,6 @@ export function exportToCsv(filename: string, rows: Record<string, any>[]) {
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
-  // 🔒 Sanitize filename
   const safeFilename = filename.replace(/[^a-zA-Z0-9_\-\.]/g, "_");
   a.download = safeFilename.endsWith(".csv")
     ? safeFilename

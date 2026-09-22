@@ -18,6 +18,28 @@ const router = Router();
 router.use(requireAuth);
 
 // ============================================================
+// 🔒 HELPER: Check kung regular employee
+// Regular = employment_type === "regular"
+// ============================================================
+async function isRegularEmployee(employeeId) {
+  const rows = await q(
+    "SELECT employment_type, status FROM employees WHERE id = :id LIMIT 1",
+    { id: employeeId }
+  );
+  const emp = rows[0];
+  if (!emp) return { valid: false, reason: "not_found" };
+  if (emp.status !== "active") return { valid: false, reason: "inactive" };
+  if (emp.employment_type !== "regular") {
+    return {
+      valid: false,
+      reason: "not_regular",
+      employment_type: emp.employment_type,
+    };
+  }
+  return { valid: true };
+}
+
+// ============================================================
 // GET /leave-requests/me — sariling leave requests (LAHAT ng roles)
 // ============================================================
 router.get("/me", async (req, res) => {
@@ -26,7 +48,13 @@ router.get("/me", async (req, res) => {
       return res.status(404).json({ error: "No linked employee record." });
     }
     const rows = await q(
-      "SELECT * FROM leave_requests WHERE employee_id = :employee_id ORDER BY created_at DESC",
+      `SELECT 
+         id, employee_id, leave_type, start_date, end_date, days_count,
+         reason, status, created_at,
+         attachment_name, attachment_type, attachment_size
+       FROM leave_requests 
+       WHERE employee_id = :employee_id 
+       ORDER BY created_at DESC`,
       { employee_id: req.user.employee_id }
     );
     return res.json(rows);
@@ -36,16 +64,42 @@ router.get("/me", async (req, res) => {
 });
 
 // ============================================================
-// POST /leave-requests/me — employee self-filing (LAHAT ng roles)
+// POST /leave-requests/me — employee self-filing
+// 🔒 REGULAR EMPLOYEE ONLY
 // ============================================================
 router.post("/me", async (req, res) => {
   try {
     if (!req.user.employee_id) {
       return res.status(404).json({ error: "No linked employee record." });
     }
+
+    // 🔒 REGULAR EMPLOYEE CHECK
+    const check = await isRegularEmployee(req.user.employee_id);
+
+    if (!check.valid) {
+      if (check.reason === "not_found") {
+        return res.status(404).json({ error: "Employee record not found." });
+      }
+      if (check.reason === "inactive") {
+        return validationError(
+          res,
+          "Your account is inactive. Please contact HR."
+        );
+      }
+      if (check.reason === "not_regular") {
+        const label = String(check.employment_type ?? "")
+          .replace("_", " ")
+          .replace(/\b\w/g, (c) => c.toUpperCase());
+        return validationError(
+          res,
+          `Only regular employees can file leave requests. Your employment type is "${label}".`
+        );
+      }
+    }
+
     const parsed = createLeaveRequestSchema.safeParse(req.body);
     if (!parsed.success) return validationError(res, getZodError(parsed));
-    const { leave_type, start_date, end_date, reason } = parsed.data;
+    const { leave_type, start_date, end_date, reason, attachment } = parsed.data;
 
     const start = new Date(start_date);
     const end = new Date(end_date);
@@ -109,8 +163,14 @@ router.post("/me", async (req, res) => {
 
     const id = crypto.randomUUID();
     await q(
-      `INSERT INTO leave_requests (id, employee_id, leave_type, start_date, end_date, days_count, reason, status)
-       VALUES (:id, :employee_id, :leave_type, :start_date, :end_date, :days_count, :reason, 'pending')`,
+      `INSERT INTO leave_requests (
+         id, employee_id, leave_type, start_date, end_date, days_count, reason, status,
+         attachment_data, attachment_name, attachment_type, attachment_size
+       )
+       VALUES (
+         :id, :employee_id, :leave_type, :start_date, :end_date, :days_count, :reason, 'pending',
+         :attachment_data, :attachment_name, :attachment_type, :attachment_size
+       )`,
       {
         id,
         employee_id: req.user.employee_id,
@@ -118,7 +178,11 @@ router.post("/me", async (req, res) => {
         start_date,
         end_date,
         days_count,
-        reason: reason || null,
+        reason,
+        attachment_data: attachment?.data ?? null,
+        attachment_name: attachment?.name ?? null,
+        attachment_type: attachment?.type ?? null,
+        attachment_size: attachment?.size ?? null,
       }
     );
 
@@ -127,7 +191,13 @@ router.post("/me", async (req, res) => {
       action: "create",
       module: "leave_requests",
       recordId: id,
-      newValues: { leave_type, start_date, end_date, days_count },
+      newValues: {
+        leave_type,
+        start_date,
+        end_date,
+        days_count,
+        has_attachment: !!attachment,
+      },
       ip: req.ip,
     });
 
@@ -144,7 +214,7 @@ router.post("/me", async (req, res) => {
 });
 
 // ============================================================
-// GET /leave-requests — MANAGEMENT lang (admin, hr_manager, supervisor)
+// GET /leave-requests — MANAGEMENT lang
 // ============================================================
 router.get(
   "/",
@@ -153,12 +223,15 @@ router.get(
     try {
       const rows = await q(`
         SELECT
-          l.*,
+          l.id, l.employee_id, l.leave_type, l.start_date, l.end_date, l.days_count,
+          l.reason, l.status, l.created_at,
+          l.attachment_name, l.attachment_type, l.attachment_size,
           JSON_OBJECT(
             'id', e.id,
             'full_name', COALESCE(NULLIF(e.full_name, ''), CONCAT(e.first_name, ' ', e.last_name)),
             'employee_code', e.employee_code,
             'avatar_url', e.avatar_url,
+            'employment_type', e.employment_type,
             'department', JSON_OBJECT('name', d.name)
           ) AS employee
         FROM leave_requests l
@@ -176,7 +249,39 @@ router.get(
 );
 
 // ============================================================
+// GET /leave-requests/:id/attachment — Download attachment
+// ============================================================
+router.get(
+  "/:id/attachment",
+  requireRole(...ROLE_GROUPS.MANAGEMENT),
+  async (req, res) => {
+    try {
+      const rows = await q(
+        `SELECT attachment_data, attachment_name, attachment_type, attachment_size
+         FROM leave_requests WHERE id = :id LIMIT 1`,
+        { id: req.params.id }
+      );
+      const leave = rows[0];
+
+      if (!leave || !leave.attachment_data) {
+        return res.status(404).json({ error: "No attachment found." });
+      }
+
+      return res.json({
+        data: leave.attachment_data,
+        name: leave.attachment_name,
+        type: leave.attachment_type,
+        size: leave.attachment_size,
+      });
+    } catch (err) {
+      return safeError(res, err, "Failed to fetch attachment.");
+    }
+  }
+);
+
+// ============================================================
 // POST /leave-requests — MANAGEMENT lang (filing on behalf)
+// 🔒 REGULAR EMPLOYEE LANG ANG PWEDENG MAG-FILE
 // ============================================================
 router.post(
   "/",
@@ -185,8 +290,32 @@ router.post(
     try {
       const parsed = adminCreateLeaveRequestSchema.safeParse(req.body);
       if (!parsed.success) return validationError(res, getZodError(parsed));
-      const { employee_id, leave_type, start_date, end_date, reason } =
+      const { employee_id, leave_type, start_date, end_date, reason, attachment } =
         parsed.data;
+
+      // 🔒 CHECK: Regular employee lang ang pwedeng mag-file
+      const check = await isRegularEmployee(employee_id);
+
+      if (!check.valid) {
+        if (check.reason === "not_found") {
+          return validationError(res, "Employee not found.");
+        }
+        if (check.reason === "inactive") {
+          return validationError(
+            res,
+            "This employee is inactive. Only active employees can file leave requests."
+          );
+        }
+        if (check.reason === "not_regular") {
+          const label = String(check.employment_type ?? "")
+            .replace("_", " ")
+            .replace(/\b\w/g, (c) => c.toUpperCase());
+          return validationError(
+            res,
+            `Only regular employees can file leave requests. This employee's employment type is "${label}".`
+          );
+        }
+      }
 
       const start = new Date(start_date);
       const end = new Date(end_date);
@@ -200,8 +329,14 @@ router.post(
 
       const id = crypto.randomUUID();
       await q(
-        `INSERT INTO leave_requests (id, employee_id, leave_type, start_date, end_date, days_count, reason, status)
-         VALUES (:id, :employee_id, :leave_type, :start_date, :end_date, :days_count, :reason, 'pending')`,
+        `INSERT INTO leave_requests (
+           id, employee_id, leave_type, start_date, end_date, days_count, reason, status,
+           attachment_data, attachment_name, attachment_type, attachment_size
+         )
+         VALUES (
+           :id, :employee_id, :leave_type, :start_date, :end_date, :days_count, :reason, 'pending',
+           :attachment_data, :attachment_name, :attachment_type, :attachment_size
+         )`,
         {
           id,
           employee_id,
@@ -209,7 +344,11 @@ router.post(
           start_date,
           end_date,
           days_count,
-          reason: reason || null,
+          reason,
+          attachment_data: attachment?.data ?? null,
+          attachment_name: attachment?.name ?? null,
+          attachment_type: attachment?.type ?? null,
+          attachment_size: attachment?.size ?? null,
         }
       );
 
@@ -218,7 +357,13 @@ router.post(
         action: "create",
         module: "leave_requests",
         recordId: id,
-        newValues: { employee_id, leave_type, start_date, end_date },
+        newValues: {
+          employee_id,
+          leave_type,
+          start_date,
+          end_date,
+          has_attachment: !!attachment,
+        },
         ip: req.ip,
       });
 
@@ -248,7 +393,7 @@ router.post(
 );
 
 // ============================================================
-// PATCH /leave-requests/:id/status — APPROVERS (admin, hr, supervisor)
+// PATCH /leave-requests/:id/status — APPROVERS
 // ============================================================
 router.patch(
   "/:id/status",

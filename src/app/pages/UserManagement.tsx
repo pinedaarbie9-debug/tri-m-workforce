@@ -1,7 +1,13 @@
+// src/app/pages/UserManagement.tsx
 import { useState, useEffect, useCallback } from "react";
-import { ShieldCheck, Search, Plus, Shield, Edit2, Trash2, MoreHorizontal, UserCheck, Lock, Loader2 } from "lucide-react";
+import {
+  ShieldCheck, Search, Plus, Shield, Edit2, Trash2, MoreHorizontal,
+  UserCheck, Lock, Loader2, Eye, EyeOff,
+} from "lucide-react";
 import { motion } from "motion/react";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "../components/ui/dropdown-menu";
+import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
+} from "../components/ui/dropdown-menu";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../components/ui/dialog";
 import { api } from "../../lib/api";
 import type { UserRole } from "../../types";
@@ -18,7 +24,10 @@ interface UserRow {
   employee_id?: string | null;
 }
 
-const roleConfig: Record<UserRole, { label: string; className: string; icon: React.ComponentType<{ className?: string }> }> = {
+const roleConfig: Record<
+  UserRole,
+  { label: string; className: string; icon: React.ComponentType<{ className?: string }> }
+> = {
   admin:      { label: "Admin",      className: "bg-purple-100 text-purple-700 border-purple-200", icon: Shield },
   hr_manager: { label: "HR Manager", className: "bg-blue-100 text-blue-700 border-blue-200",       icon: ShieldCheck },
   supervisor: { label: "Supervisor", className: "bg-amber-100 text-amber-700 border-amber-200",    icon: UserCheck },
@@ -49,19 +58,24 @@ export function UserManagementPage() {
   const [search, setSearch] = useState("");
   const [tab, setTab] = useState<"users" | "roles">("users");
 
+  // 🔒 Add User Modal
   const [showAddModal, setShowAddModal] = useState(false);
   const [form, setForm] = useState(emptyForm);
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
+  const [showAddPassword, setShowAddPassword] = useState(false);
 
+  // 🔒 Edit User Modal
   const [showEditModal, setShowEditModal] = useState(false);
   const [editingUser, setEditingUser] = useState<UserRow | null>(null);
   const [editForm, setEditForm] = useState(emptyEditForm);
   const [editSaving, setEditSaving] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);
+  const [showEditPassword, setShowEditPassword] = useState(false);
   const [linkedDeletedEmployee, setLinkedDeletedEmployee] = useState<any | null>(null);
   const [loadingLinkedEmployee, setLoadingLinkedEmployee] = useState(false);
 
+  // 🔒 Change Role Modal
   const [showRoleModal, setShowRoleModal] = useState(false);
   const [roleTargetUser, setRoleTargetUser] = useState<UserRow | null>(null);
   const [roleValue, setRoleValue] = useState<UserRole>("employee");
@@ -95,6 +109,13 @@ export function UserManagementPage() {
 
   const editEmployeeOptions = linkedDeletedEmployee ? [...employees, linkedDeletedEmployee] : employees;
 
+  function openAddModal() {
+    setForm(emptyForm);
+    setFormError(null);
+    setShowAddPassword(false);
+    setShowAddModal(true);
+  }
+
   async function handleAddUser(e: React.FormEvent) {
     e.preventDefault();
     setFormError(null);
@@ -122,6 +143,7 @@ export function UserManagementPage() {
   async function openEditModal(user: UserRow) {
     setEditingUser(user);
     setEditError(null);
+    setShowEditPassword(false);
     setLinkedDeletedEmployee(null);
     setEditForm({
       full_name: user.full_name,
@@ -252,7 +274,7 @@ export function UserManagementPage() {
           ))}
         </div>
         <button
-          onClick={() => { setForm(emptyForm); setFormError(null); setShowAddModal(true); }}
+          onClick={openAddModal}
           className="flex items-center justify-center gap-2 px-4 py-2.5 text-sm bg-primary text-white rounded-xl hover:bg-primary/90 transition-colors w-full sm:w-auto"
         >
           <Plus className="w-4 h-4" /> Add User
@@ -383,6 +405,7 @@ export function UserManagementPage() {
         </div>
       )}
 
+      {/* Add User Modal */}
       <Dialog open={showAddModal} onOpenChange={setShowAddModal}>
         <DialogContent className="sm:max-w-md max-h-[85vh] overflow-y-auto">
           <DialogHeader><DialogTitle>Add User</DialogTitle></DialogHeader>
@@ -400,11 +423,31 @@ export function UserManagementPage() {
               <input type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })}
                 className="w-full px-3.5 py-2.5 rounded-lg border border-border bg-input-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/20" placeholder="juan@company.com" />
             </div>
+
+            {/* 🔒 PASSWORD — may eye icon */}
             <div className="space-y-1.5">
               <label className="text-sm font-medium text-foreground">Password</label>
-              <input type="password" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })}
-                className="w-full px-3.5 py-2.5 rounded-lg border border-border bg-input-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/20" placeholder="At least 6 characters" />
+              <div className="relative">
+                <input
+                  type={showAddPassword ? "text" : "password"}
+                  value={form.password}
+                  onChange={(e) => setForm({ ...form, password: e.target.value })}
+                  className="w-full px-3.5 py-2.5 pr-10 rounded-lg border border-border bg-input-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/20"
+                  placeholder="At least 6 characters"
+                  autoComplete="new-password"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowAddPassword(!showAddPassword)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
+                  tabIndex={-1}
+                  aria-label={showAddPassword ? "Hide password" : "Show password"}
+                >
+                  {showAddPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
+              </div>
             </div>
+
             <div className="space-y-1.5">
               <label className="text-sm font-medium text-foreground">Role</label>
               <select value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value as UserRole })}
@@ -440,6 +483,7 @@ export function UserManagementPage() {
         </DialogContent>
       </Dialog>
 
+      {/* Edit User Modal */}
       <Dialog open={showEditModal} onOpenChange={(open) => { if (!open) closeEditModal(); }}>
         <DialogContent className="sm:max-w-md max-h-[85vh] overflow-y-auto">
           <DialogHeader><DialogTitle>Edit User — {editingUser?.full_name}</DialogTitle></DialogHeader>
@@ -457,13 +501,32 @@ export function UserManagementPage() {
               <input type="email" value={editForm.email} onChange={(e) => setEditForm({ ...editForm, email: e.target.value })}
                 className="w-full px-3.5 py-2.5 rounded-lg border border-border bg-input-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/20" />
             </div>
+
+            {/* 🔒 NEW PASSWORD — may eye icon */}
             <div className="space-y-1.5">
               <label className="text-sm font-medium text-foreground">New Password</label>
-              <input type="password" value={editForm.password} onChange={(e) => setEditForm({ ...editForm, password: e.target.value })}
-                className="w-full px-3.5 py-2.5 rounded-lg border border-border bg-input-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/20"
-                placeholder="Leave blank to keep current password" />
+              <div className="relative">
+                <input
+                  type={showEditPassword ? "text" : "password"}
+                  value={editForm.password}
+                  onChange={(e) => setEditForm({ ...editForm, password: e.target.value })}
+                  className="w-full px-3.5 py-2.5 pr-10 rounded-lg border border-border bg-input-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/20"
+                  placeholder="Leave blank to keep current password"
+                  autoComplete="new-password"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowEditPassword(!showEditPassword)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
+                  tabIndex={-1}
+                  aria-label={showEditPassword ? "Hide password" : "Show password"}
+                >
+                  {showEditPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
+              </div>
               <p className="text-xs text-muted-foreground">Only fill this in if you want to change the password.</p>
             </div>
+
             <div className="space-y-1.5">
               <label className="text-sm font-medium text-foreground">Role</label>
               <select value={editForm.role} onChange={(e) => setEditForm({ ...editForm, role: e.target.value as UserRole })}
@@ -513,6 +576,7 @@ export function UserManagementPage() {
         </DialogContent>
       </Dialog>
 
+      {/* Change Role Modal */}
       <Dialog open={showRoleModal} onOpenChange={setShowRoleModal}>
         <DialogContent className="sm:max-w-sm">
           <DialogHeader><DialogTitle>Change Role — {roleTargetUser?.full_name}</DialogTitle></DialogHeader>

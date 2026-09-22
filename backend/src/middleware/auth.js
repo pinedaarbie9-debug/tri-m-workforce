@@ -3,9 +3,9 @@ import jwt from "jsonwebtoken";
 import { q } from "../db.js";
 import { ROLE_LEVELS } from "../utils/roles.js";
 
-/**
- * requireAuth — Vinerify ang JWT AT nagre-refresh ng user data mula DB.
- */
+// ============================================================
+// 🔒 requireAuth — Verify JWT + DB refresh + session check
+// ============================================================
 export async function requireAuth(req, res, next) {
   try {
     const authHeader = req.headers.authorization;
@@ -26,7 +26,7 @@ export async function requireAuth(req, res, next) {
     }
 
     const rows = await q(
-      "SELECT id, email, role, full_name, employee_id, status FROM users WHERE id = :id LIMIT 1",
+      "SELECT id, email, role, full_name, employee_id, status, current_session_id FROM users WHERE id = :id LIMIT 1",
       { id: decoded.id }
     );
     const user = rows[0];
@@ -38,6 +38,19 @@ export async function requireAuth(req, res, next) {
     if (user.status !== "active") {
       return res.status(403).json({ error: "Account is inactive." });
     }
+
+    // 🔒 SINGLE-DEVICE LOGIN
+    if (
+      user.current_session_id &&
+      decoded.session_id !== user.current_session_id
+    ) {
+      return res.status(401).json({
+        error: "Session expired. You have been logged in from another device.",
+      });
+    }
+
+    // ⚠️ IDLE TIMEOUT — Inalis na dito kasi frontend na ang may control
+    // (May bug ang dating backend check — nag-expire agad)
 
     req.user = {
       id: user.id,
@@ -54,9 +67,9 @@ export async function requireAuth(req, res, next) {
   }
 }
 
-/**
- * requireRole — Exact role check.
- */
+// ============================================================
+// 🔒 requireRole — Exact role check
+// ============================================================
 export function requireRole(...roles) {
   return (req, res, next) => {
     if (!req.user) {
@@ -71,10 +84,9 @@ export function requireRole(...roles) {
   };
 }
 
-/**
- * requireMinLevel — Hierarchy-based access control.
- * Halimbawa: requireMinLevel(60) → supervisor, hr_manager, admin
- */
+// ============================================================
+// 🔒 requireMinLevel — Hierarchy-based access control
+// ============================================================
 export function requireMinLevel(minLevel) {
   return (req, res, next) => {
     if (!req.user) {

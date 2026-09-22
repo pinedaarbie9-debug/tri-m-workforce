@@ -18,6 +18,11 @@ const emailSchema = z
   .max(255, "Email too long.");
 
 // ============================================================
+// EMPLOYMENT TYPE ENUM
+// ============================================================
+const EMPLOYMENT_TYPES = ["regular", "part_time", "contract", "probationary"];
+
+// ============================================================
 // EMPLOYEES
 // ============================================================
 export const createEmployeeSchema = z.object({
@@ -27,11 +32,8 @@ export const createEmployeeSchema = z.object({
   phone: z.string().trim().max(30).optional().nullable(),
   job_title: z.string().trim().max(100).optional().nullable(),
   department_id: uuidSchema.optional().nullable(),
-  employment_type: z
-    .enum(["full_time", "part_time", "contract", "intern"])
-    .optional(),
+  employment_type: z.enum(EMPLOYMENT_TYPES).optional(),
   status: z.enum(["active", "inactive", "suspended"]).optional(),
-  // 🔒 REQUIRED na ngayon — hindi na optional
   hire_date: isoDateSchema,
 });
 
@@ -57,10 +59,13 @@ export const attendanceQuerySchema = z.object({
 
 // ============================================================
 // BIOMETRIC
+// 🔒 Face ID at Fingerprint LANG — walang PIN, walang Access Card
 // ============================================================
 export const createBiometricSchema = z.object({
   employee_id: uuidSchema,
-  device_type: z.enum(["fingerprint", "face_id", "pin", "card"]),
+  device_type: z.enum(["fingerprint", "face_id"], {
+    message: "Only Face ID and Fingerprint are allowed.",
+  }),
   device_name: z.string().trim().max(100).optional().nullable(),
   photo_data: z.string().max(5_000_000).optional().nullable(),
   face_descriptor: z.array(z.number()).min(64).max(512).optional().nullable(),
@@ -148,19 +153,43 @@ export const updateDepartmentSchema = createDepartmentSchema.partial();
 // ============================================================
 const LEAVE_TYPES = ["annual", "sick", "emergency", "unpaid", "maternity", "paternity"];
 
+const attachmentSchema = z.object({
+  data: z
+    .string({ required_error: "Attachment is required." })
+    .min(1, "Attachment data is required.")
+    .max(7_000_000, "File too large (max 5MB)."),
+  name: z
+    .string({ required_error: "File name is required." })
+    .trim()
+    .min(1, "File name is required.")
+    .max(255, "File name too long."),
+  type: z
+    .string({ required_error: "File type is required." })
+    .regex(
+      /^(application\/pdf|image\/(jpeg|jpg|png|webp))$/,
+      "Only PDF, JPG, PNG, or WebP files are allowed."
+    ),
+  size: z
+    .number({ required_error: "File size is required." })
+    .int()
+    .positive("File size must be positive.")
+    .max(5_242_880, "File too large (max 5MB)."),
+});
+
 export const createLeaveRequestSchema = z.object({
   leave_type: z.enum(LEAVE_TYPES, { message: "Invalid leave type." }),
-  start_date: z
-    .string()
-    .regex(/^\d{4}-\d{2}-\d{2}$/, "Invalid date format (YYYY-MM-DD)."),
-  end_date: z
-    .string()
-    .regex(/^\d{4}-\d{2}-\d{2}$/, "Invalid date format (YYYY-MM-DD)."),
-  reason: z.string().trim().max(500).optional().nullable(),
+  start_date: isoDateSchema,
+  end_date: isoDateSchema,
+  reason: z
+    .string({ required_error: "Reason is required." })
+    .trim()
+    .min(10, "Reason must be at least 10 characters.")
+    .max(500, "Reason too long (max 500 characters)."),
+  attachment: attachmentSchema,
 });
 
 export const adminCreateLeaveRequestSchema = createLeaveRequestSchema.extend({
-  employee_id: z.string().uuid("Invalid employee ID."),
+  employee_id: uuidSchema,
 });
 
 export const updateLeaveStatusSchema = z.object({
@@ -185,12 +214,6 @@ export const updateSettingsSchema = z.object({
 // PARTNER ATTENDANCE
 // ============================================================
 export const partnerAttendanceQuerySchema = z.object({
-  from: z
-    .string()
-    .regex(/^\d{4}-\d{2}-\d{2}$/, "Invalid from date (YYYY-MM-DD).")
-    .optional(),
-  to: z
-    .string()
-    .regex(/^\d{4}-\d{2}-\d{2}$/, "Invalid to date (YYYY-MM-DD).")
-    .optional(),
+  from: isoDateSchema.optional(),
+  to: isoDateSchema.optional(),
 });

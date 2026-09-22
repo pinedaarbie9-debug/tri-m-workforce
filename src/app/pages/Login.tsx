@@ -23,11 +23,10 @@ type LoginForm = z.infer<typeof loginSchema>;
 const SMOOTH_EASE = [0.22, 1, 0.36, 1] as const;
 const BOUNCE_EASE = [0.34, 1.56, 0.64, 1] as const;
 
-// 🔒 DEVICE-LEVEL lockout key (hindi per-email)
+// 🔒 DEVICE-LEVEL lockout key
 const DEVICE_LOCKOUT_KEY = "wms_device_lockout_until";
 const LAST_EMAIL_KEY = "wms_last_email";
 
-// 🔒 Format seconds → "M:SS"
 function formatMMSS(totalSeconds: number): string {
   const safeSeconds = Math.max(0, Math.floor(totalSeconds));
   const minutes = Math.floor(safeSeconds / 60);
@@ -35,7 +34,6 @@ function formatMMSS(totalSeconds: number): string {
   return `${minutes}:${String(seconds).padStart(2, "0")}`;
 }
 
-// 🔒 Device-level lockout check
 function getDeviceLockout(): { seconds: number; message: string | null } {
   try {
     const stored = localStorage.getItem(DEVICE_LOCKOUT_KEY);
@@ -49,7 +47,6 @@ function getDeviceLockout(): { seconds: number; message: string | null } {
     if (remaining > 0) {
       return { seconds: remaining, message: "Too many login attempts." };
     }
-    // 🔒 Auto-reset pagkatapos mag-expire
     localStorage.removeItem(DEVICE_LOCKOUT_KEY);
     return { seconds: 0, message: null };
   } catch {
@@ -217,12 +214,11 @@ export function LoginPage() {
   const [isLoading, setIsLoading] = useState(false);
   const [success, setSuccess] = useState(false);
 
-  // 🔒 DEVICE-LEVEL lockout (hindi per-email)
+  // 🔒 DEVICE-LEVEL lockout
   const initialLockout = getDeviceLockout();
   const [error, setError] = useState<string | null>(initialLockout.message);
   const [lockoutSeconds, setLockoutSeconds] = useState(initialLockout.seconds);
 
-  // 🔒 Restore last email
   const [lastEmail] = useState<string>(() => {
     return localStorage.getItem(LAST_EMAIL_KEY) || "";
   });
@@ -239,6 +235,15 @@ export function LoginPage() {
       password: "",
     },
   });
+
+  // 🔒 Check kung may session message (from another device login)
+  useEffect(() => {
+    const message = sessionStorage.getItem("wms_session_message");
+    if (message) {
+      setError(message);
+      sessionStorage.removeItem("wms_session_message");
+    }
+  }, []);
 
   // 🔒 Countdown timer
   useEffect(() => {

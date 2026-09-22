@@ -3,6 +3,7 @@ import { Router } from "express";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import speakeasy from "speakeasy";
+import crypto from "node:crypto";
 import { q } from "../db.js";
 import { requireAuth } from "../middleware/auth.js";
 import { safeError, validationError } from "../utils/errorResponse.js";
@@ -15,15 +16,11 @@ import {
 const router = Router();
 
 // ============================================================
-// 🔒 GRADUATED LOCKOUT SYSTEM — PRODUCTION VALUES
-// ============================================================
-// Attempts 1-6:  Generic error lang
-// Attempts 7-14: Lockout 1 minute
-// Attempts 15+:  Lockout 5 minutes
+// GRADUATED LOCKOUT SYSTEM
 // ============================================================
 const LOCKOUT_TIERS = [
-  { threshold: 15, lockoutSeconds: 300 }, // 5 minutes
-  { threshold: 7,  lockoutSeconds: 60  }, // 1 minute
+  { threshold: 15, lockoutSeconds: 300 },
+  { threshold: 7, lockoutSeconds: 60 },
 ];
 
 const FIRST_LOCKOUT_THRESHOLD = 7;
@@ -58,15 +55,11 @@ function euclideanDistance(a, b) {
   return Math.sqrt(sum);
 }
 
-// ============================================================
-// 🔒 Auto-reset: kung expired na ang lockout, i-reset ang counter
-// ============================================================
 async function autoResetLockoutIfExpired(user) {
   if (!user.locked_until) return user;
-  
+
   const isExpired = new Date(user.locked_until) <= new Date();
   if (isExpired) {
-    console.log(`🔍 Auto-reset lockout for ${user.email} (expired)`);
     await q(
       "UPDATE users SET failed_login_attempts = 0, locked_until = NULL WHERE id = :id",
       { id: user.id }
@@ -78,9 +71,11 @@ async function autoResetLockoutIfExpired(user) {
 }
 
 async function issueSession(user, req) {
+  const sessionId = crypto.randomBytes(32).toString("hex");
+
   await q(
-    "UPDATE users SET last_login = NOW(), failed_login_attempts = 0, locked_until = NULL WHERE id = :id",
-    { id: user.id }
+    "UPDATE users SET last_login = NOW(), failed_login_attempts = 0, locked_until = NULL, current_session_id = :sessionId WHERE id = :id",
+    { id: user.id, sessionId }
   );
 
   const token = jwt.sign(
@@ -90,6 +85,7 @@ async function issueSession(user, req) {
       role: user.role,
       full_name: user.full_name,
       employee_id: user.employee_id ?? null,
+      session_id: sessionId,
     },
     process.env.JWT_SECRET,
     { expiresIn: JWT_EXPIRES_IN }
@@ -112,16 +108,10 @@ async function issueSession(user, req) {
   };
 }
 
-// ============================================================
-// 🔒 registerFailedAttempt — may auto-reset check
-// ============================================================
 async function registerFailedAttempt(user) {
-  let currentAttempts = user.failed_login_attempts ?? 0;
-  const lockoutSeconds = getLockoutSeconds(currentAttempts + 1);
-
-  console.log(`🔍 Attempt for ${user.email}: previous=${currentAttempts}, new=${currentAttempts + 1}, lockout=${lockoutSeconds}s`);
-
+  const currentAttempts = user.failed_login_attempts ?? 0;
   const attempts = currentAttempts + 1;
+  const lockoutSeconds = getLockoutSeconds(attempts);
 
   if (attempts >= FIRST_LOCKOUT_THRESHOLD) {
     await q(
@@ -160,22 +150,26 @@ router.post("/login", async (req, res) => {
     if (!parsed.success) return validationError(res, getZodError(parsed));
     const { email, password } = parsed.data;
 
-    const rows = await q("SELECT * FROM users WHERE email = :email LIMIT 1", { email });
+    const rows = await q(
+      "SELECT * FROM users WHERE email = :email LIMIT 1",
+      { email }
+    );
     let user = rows[0];
 
-    // 🔒 Generic error — hindi nag-e-enumerate ng valid emails
     if (!user) {
       return res.status(401).json({ error: "Invalid email or password." });
     }
 
-    // 🔒 AUTO-RESET: kung expired na ang lockout, i-reset ang counter
     user = await autoResetLockoutIfExpired(user);
 
-    // 🔒 Check lockout — kung naka-lock pa
     if (user.locked_until && new Date(user.locked_until) > new Date()) {
-      const secsLeft = Math.ceil((new Date(user.locked_until) - new Date()) / 1000);
+      const secsLeft = Math.ceil(
+        (new Date(user.locked_until) - new Date()) / 1000
+      );
       return res.status(403).json({
-        error: `Too many login attempts. Try again in ${formatDuration(secsLeft)}.`,
+        error: `Too many login attempts. Try again in ${formatDuration(
+          secsLeft
+        )}.`,
         locked_until: user.locked_until,
         seconds_left: secsLeft,
       });
@@ -187,18 +181,23 @@ router.post("/login", async (req, res) => {
 
       if (result.locked) {
         return res.status(401).json({
-          error: `Too many login attempts. Try again in ${formatDuration(result.lockoutSeconds)}.`,
-          locked_until: new Date(Date.now() + result.lockoutSeconds * 1000).toISOString(),
+          error: `Too many login attempts. Try again in ${formatDuration(
+            result.lockoutSeconds
+          )}.`,
+          locked_until: new Date(
+            Date.now() + result.lockoutSeconds * 1000
+          ).toISOString(),
           seconds_left: result.lockoutSeconds,
         });
       }
 
-      // 🔒 Generic error — walang attempts counter
       return res.status(401).json({ error: "Invalid email or password." });
     }
 
     if (user.status !== "active") {
-      return res.status(403).json({ error: "This account is suspended or inactive." });
+      return res
+        .status(403)
+        .json({ error: "This account is suspended or inactive." });
     }
 
     if (user.mfa_enabled) {
@@ -236,7 +235,8 @@ router.post("/face-login", async (req, res) => {
       } catch {
         continue;
       }
-      if (!Array.isArray(stored) || stored.length !== face_descriptor.length) continue;
+      if (!Array.isArray(stored) || stored.length !== face_descriptor.length)
+        continue;
       const dist = euclideanDistance(stored, face_descriptor);
       if (dist < bestDistance) {
         bestDistance = dist;
@@ -245,7 +245,9 @@ router.post("/face-login", async (req, res) => {
     }
 
     if (!bestEmployeeId || bestDistance > FACE_THRESHOLD) {
-      return res.status(401).json({ error: "No matching face found. You are not recognized." });
+      return res
+        .status(401)
+        .json({ error: "No matching face found. You are not recognized." });
     }
 
     const userRows = await q(
@@ -256,24 +258,30 @@ router.post("/face-login", async (req, res) => {
 
     if (!user) {
       return res.status(404).json({
-        error: "Face recognized but no linked login account. Please contact admin.",
+        error:
+          "Face recognized but no linked login account. Please contact admin.",
       });
     }
 
-    // 🔒 AUTO-RESET
     user = await autoResetLockoutIfExpired(user);
 
     if (user.locked_until && new Date(user.locked_until) > new Date()) {
-      const secsLeft = Math.ceil((new Date(user.locked_until) - new Date()) / 1000);
+      const secsLeft = Math.ceil(
+        (new Date(user.locked_until) - new Date()) / 1000
+      );
       return res.status(403).json({
-        error: `Too many login attempts. Try again in ${formatDuration(secsLeft)}.`,
+        error: `Too many login attempts. Try again in ${formatDuration(
+          secsLeft
+        )}.`,
         locked_until: user.locked_until,
         seconds_left: secsLeft,
       });
     }
 
     if (user.status !== "active") {
-      return res.status(403).json({ error: "This account is suspended or inactive." });
+      return res
+        .status(403)
+        .json({ error: "This account is suspended or inactive." });
     }
 
     if (user.mfa_enabled) {
@@ -300,18 +308,24 @@ router.post("/verify-mfa", async (req, res) => {
     try {
       decoded = jwt.verify(temp_token, process.env.JWT_SECRET);
     } catch {
-      return res.status(401).json({ error: "Invalid or expired temp token. Please log in again." });
+      return res.status(401).json({
+        error: "Invalid or expired temp token. Please log in again.",
+      });
     }
 
     if (!decoded.mfa_pending) {
       return res.status(401).json({ error: "Invalid temp token." });
     }
 
-    const rows = await q("SELECT * FROM users WHERE id = :id LIMIT 1", { id: decoded.id });
+    const rows = await q("SELECT * FROM users WHERE id = :id LIMIT 1", {
+      id: decoded.id,
+    });
     const user = rows[0];
 
     if (!user || !user.mfa_enabled || !user.mfa_secret) {
-      return res.status(400).json({ error: "MFA is not enabled for this account." });
+      return res
+        .status(400)
+        .json({ error: "MFA is not enabled for this account." });
     }
 
     const isValidTotp = speakeasy.totp.verify({
@@ -335,7 +349,7 @@ router.post("/verify-mfa", async (req, res) => {
           });
         }
       } catch (parseErr) {
-        console.error("❌ Backup code parse error:", parseErr);
+        console.error("Backup code parse error:", parseErr);
       }
     }
 
@@ -362,10 +376,124 @@ router.get("/me", requireAuth, async (req, res) => {
 });
 
 // ============================================================
+// POST /api/auth/verify-password
+// ============================================================
+router.post("/verify-password", requireAuth, async (req, res) => {
+  try {
+    const { password } = req.body;
+
+    if (!password || typeof password !== "string" || password.length === 0) {
+      return res.status(400).json({ error: "Password is required." });
+    }
+
+    const rows = await q(
+      "SELECT password_hash FROM users WHERE id = :id LIMIT 1",
+      { id: req.user.id }
+    );
+    const user = rows[0];
+
+    if (!user) {
+      return res.status(404).json({ error: "User not found." });
+    }
+
+    const isValid = await bcrypt.compare(password, user.password_hash);
+
+    if (!isValid) {
+      await q(
+        "INSERT INTO audit_logs (user_id, action, module, ip_address) VALUES (:uid, 'verify_password_failed', 'auth', :ip)",
+        { uid: req.user.id, ip: req.ip }
+      );
+      return res.status(403).json({ error: "Incorrect password." });
+    }
+
+    await q(
+      "INSERT INTO audit_logs (user_id, action, module, ip_address) VALUES (:uid, 'verify_password', 'auth', :ip)",
+      { uid: req.user.id, ip: req.ip }
+    );
+
+    return res.json({ ok: true });
+  } catch (err) {
+    return safeError(res, err, "Failed to verify password.");
+  }
+});
+
+// ============================================================
+// POST /api/auth/verify-file-password
+// 🔒 ADMIN + HR LANG ang pwedeng mag-download ng file
+// ============================================================
+router.post("/verify-file-password", requireAuth, async (req, res) => {
+  try {
+    // 🔒 ROLE CHECK: Admin at HR Manager lang
+    const allowedRoles = ["admin", "hr_manager"];
+    if (!allowedRoles.includes(req.user.role)) {
+      return res.status(403).json({
+        error: "Only Admins and HR Managers can download exported files.",
+      });
+    }
+
+    const { password } = req.body;
+
+    if (!password || typeof password !== "string" || password.length === 0) {
+      return res.status(400).json({ error: "Password is required." });
+    }
+
+    // 🔒 Kunin ang hashed file export password mula sa settings
+    const rows = await q(
+      "SELECT value FROM settings WHERE `key` = 'file_export_password_hash' LIMIT 1"
+    );
+
+    if (!rows[0]) {
+      return res.status(500).json({
+        error:
+          "File export password is not configured. Please contact admin.",
+      });
+    }
+
+    // 🔒 Parse ang JSON string
+    let storedHash;
+    try {
+      storedHash = JSON.parse(rows[0].value);
+    } catch {
+      storedHash = rows[0].value;
+    }
+
+    if (!storedHash || typeof storedHash !== "string") {
+      return res.status(500).json({
+        error: "Invalid password storage format. Please contact admin.",
+      });
+    }
+
+    // 🔒 Compare gamit ang bcrypt
+    const isValid = await bcrypt.compare(password, storedHash);
+
+    if (!isValid) {
+      await q(
+        "INSERT INTO audit_logs (user_id, action, module, ip_address) VALUES (:uid, 'verify_password_failed', 'auth', :ip)",
+        { uid: req.user.id, ip: req.ip }
+      );
+      return res.status(403).json({ error: "Incorrect file password." });
+    }
+
+    await q(
+      "INSERT INTO audit_logs (user_id, action, module, ip_address) VALUES (:uid, 'verify_password', 'auth', :ip)",
+      { uid: req.user.id, ip: req.ip }
+    );
+
+    return res.json({ ok: true });
+  } catch (err) {
+    return safeError(res, err, "Failed to verify file password.");
+  }
+});
+
+// ============================================================
 // POST /api/auth/logout
 // ============================================================
 router.post("/logout", requireAuth, async (req, res) => {
   try {
+    await q("UPDATE users SET current_session_id = NULL WHERE id = :id", {
+      id: req.user.id,
+    });
+
     await q(
       "INSERT INTO audit_logs (user_id, action, module, ip_address) VALUES (:uid, 'logout', 'auth', :ip)",
       { uid: req.user.id, ip: req.ip }

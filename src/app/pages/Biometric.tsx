@@ -1,7 +1,7 @@
 // src/app/pages/Biometric.tsx
 import { useState, useEffect, useCallback, useRef } from "react";
 import {
-  Fingerprint, Smartphone, CreditCard, Eye, Plus, Shield,
+  Fingerprint, Eye, Plus, Shield,
   ShieldCheck, ShieldAlert, CheckCircle2, Loader2, Camera, RotateCcw, X,
   Pencil, Trash2, RefreshCw, Eraser,
 } from "lucide-react";
@@ -16,19 +16,14 @@ const MODEL_URL = "https://cdn.jsdelivr.net/gh/justadudewhohacks/face-api.js@mas
 const deviceIcon: Record<string, React.ComponentType<{ className?: string }>> = {
   fingerprint: Fingerprint,
   face_id: Eye,
-  card: CreditCard,
-  pin: Smartphone,
 };
 const deviceColors: Record<string, string> = {
   fingerprint: "text-purple-600 bg-purple-50",
   face_id: "text-blue-600 bg-blue-50",
-  card: "text-emerald-600 bg-emerald-50",
-  pin: "text-amber-600 bg-amber-50",
 };
 
 const AUTO_PIN_TYPES = ["fingerprint"];
-const MANUAL_PIN_TYPES = ["card", "pin"];
-const PIN_BASED_TYPES = [...AUTO_PIN_TYPES, ...MANUAL_PIN_TYPES];
+const PIN_BASED_TYPES = ["fingerprint"];
 
 const POLL_MS = 20000;
 const emptyForm = { employee_id: "", device_type: "face_id", device_name: "", credential_id: "" };
@@ -276,7 +271,7 @@ export function BiometricPage() {
     try {
       const payload = {
         ...form,
-        device_name: form.device_name || (form.device_type === "face_id" ? "Camera Face ID" : "Manual Device"),
+        device_name: form.device_name || (form.device_type === "face_id" ? "Camera Face ID" : "Fingerprint Scanner"),
         photo_data: photoData,
         face_descriptor: faceDescriptor,
       };
@@ -346,7 +341,7 @@ export function BiometricPage() {
             <h1 className="text-xl sm:text-2xl font-bold flex items-center gap-2">
               <Fingerprint className="w-6 h-6 sm:w-7 sm:h-7" /> Biometric Authentication
             </h1>
-            <p className="text-white/70 text-xs sm:text-sm mt-1">Manage face recognition and biometric access control</p>
+            <p className="text-white/70 text-xs sm:text-sm mt-1">Manage face recognition and fingerprint access control</p>
           </div>
           <div className="grid grid-cols-3 gap-2 sm:gap-3 shrink-0">
             {[
@@ -459,7 +454,7 @@ export function BiometricPage() {
                             {cred.photo_data ? (
                               <img src={cred.photo_data} alt={getEmpName(cred)} className="w-10 h-10 rounded-xl object-cover shrink-0" />
                             ) : (
-                              <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${deviceColors[cred.device_type]}`}>
+                              <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${deviceColors[cred.device_type] ?? "text-gray-600 bg-gray-50"}`}>
                                 <Icon className="w-5 h-5" />
                               </div>
                             )}
@@ -537,7 +532,7 @@ export function BiometricPage() {
                         </td>
                         <td className="px-4 sm:px-5 py-4 text-sm font-mono text-muted-foreground whitespace-nowrap">{cred.last_used_at}</td>
                         <td className="px-4 sm:px-5 py-4">
-                          <span className={`px-2 py-0.5 rounded-full text-xs font-medium capitalize whitespace-nowrap ${deviceColors[cred.device_type]}`}>
+                          <span className={`px-2 py-0.5 rounded-full text-xs font-medium capitalize whitespace-nowrap ${deviceColors[cred.device_type] ?? "text-gray-600 bg-gray-50"}`}>
                             {cred.device_type.replace("_", " ")}
                           </span>
                         </td>
@@ -589,8 +584,6 @@ export function BiometricPage() {
                 className="w-full px-3.5 py-2.5 rounded-lg border border-border bg-input-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 disabled:opacity-60">
                 <option value="face_id">Face ID (Camera)</option>
                 <option value="fingerprint">Fingerprint</option>
-                <option value="card">Access Card</option>
-                <option value="pin">PIN</option>
               </select>
               {editingCredential && (
                 <p className="text-xs text-muted-foreground">Device type cannot be changed. Delete and re-enroll if needed.</p>
@@ -600,7 +593,8 @@ export function BiometricPage() {
             <div className="space-y-1.5">
               <label className="text-sm font-medium text-foreground">Device Name (optional)</label>
               <input value={form.device_name} onChange={(e) => setForm({ ...form, device_name: e.target.value })}
-                className="w-full px-3.5 py-2.5 rounded-lg border border-border bg-input-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/20" placeholder="e.g. Front Desk Scanner" />
+                className="w-full px-3.5 py-2.5 rounded-lg border border-border bg-input-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/20"
+                placeholder={form.device_type === "face_id" ? "e.g. Front Desk Camera" : "e.g. Front Desk Scanner"} />
             </div>
 
             {AUTO_PIN_TYPES.includes(form.device_type) && (
@@ -618,15 +612,6 @@ export function BiometricPage() {
                 <p className="text-xs text-muted-foreground">
                   This is the PIN entered on the fingerprint hardware when a scan matches. Automatically generated — no duplicates.
                 </p>
-              </div>
-            )}
-
-            {MANUAL_PIN_TYPES.includes(form.device_type) && (
-              <div className="space-y-1.5">
-                <label className="text-sm font-medium text-foreground">Device PIN / Card ID</label>
-                <input value={form.credential_id} onChange={(e) => setForm({ ...form, credential_id: e.target.value })}
-                  className="w-full px-3.5 py-2.5 rounded-lg border border-border bg-input-background text-sm font-mono focus:outline-none focus:ring-2 focus:ring-primary/20"
-                  placeholder={form.device_type === "card" ? "e.g. CARD-00123" : "e.g. 1234"} />
               </div>
             )}
 

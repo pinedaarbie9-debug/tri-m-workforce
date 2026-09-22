@@ -21,8 +21,8 @@ export interface Department {
   created_at: string;
   updated_at: string;
 }
+export type EmploymentType = "regular" | "part_time" | "contract" | "probationary";
 
-export type EmploymentType = "full_time" | "part_time" | "contract" | "intern";
 export type EmployeeStatus = "active" | "inactive" | "on_leave" | "terminated";
 
 export interface Employee {
