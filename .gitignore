@@ -14,7 +14,11 @@ backend/.env
 # Build Output
 build/
 backend/dist/
+<<<<<<< HEAD
     
+=======
+
+>>>>>>> c8b7bbaa890267b034c5fe45d41ed6f36d3f6117
 # Logs
 *.log
 npm-debug.log*

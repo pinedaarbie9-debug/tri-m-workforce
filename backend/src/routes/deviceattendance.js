@@ -1,258 +1,315 @@
-// backend/src/routes/deviceattendance.js
-import { Router } from "express";
+// backend/src/server.js
+
+// Last updated: 2026-09-26 — FIX: idinagdag ang fingerprintBridge route (dati'y wala sa mounting list)
+// Last updated: 2026-09-26 — FIX: idinagdag ang request timeout safety net (para sa hang/ETIMEDOUT sa unhandled async errors) + startup DB ping
+
 import express from "express";
-import crypto from "node:crypto";
-import { q } from "../db.js";
-import { getSettings } from "../settings.js";
+import cors from "cors";
+import dotenv from "dotenv";
+import helmet from "helmet";
+import rateLimit from "express-rate-limit";
+import path from "path";
+import { fileURLToPath } from "url";
 
-const router = Router();
+dotenv.config();
 
-// =============================================================================
-// ADMS / iClock PUSH PROTOCOL
-// =============================================================================
-router.use(express.text({ type: "*/*", limit: "2mb" }));
+// ============================================================
+// 🔒 ENV VALIDATION — Bago mag-import ng routes
+// ============================================================
 
-const DEVICE_SHARED_SECRET = process.env.DEVICE_SHARED_SECRET || null;
+const REQUIRED_ENV = ["JWT_SECRET", "DATABASE_URL"];
 
-function isAuthorizedDevice(req) {
-  if (!DEVICE_SHARED_SECRET) return true; // dev mode only
-  const provided = req.headers["x-device-key"] || req.query.key;
-  return provided === DEVICE_SHARED_SECRET;
+const missing = REQUIRED_ENV.filter((key) => !process.env[key]);
+
+if (missing.length > 0) {
+  console.error(`❌ Fatal: Missing required env vars: ${missing.join(", ")}`);
+  process.exit(1);
 }
 
-function timeToMinutes(t) {
-  if (!t) return null;
-  const [h, m] = t.split(":").map(Number);
-  return h * 60 + m;
+if (!process.env.JWT_SECRET || process.env.JWT_SECRET.length < 32) {
+  console.error(
+    "❌ Fatal: JWT_SECRET must be at least 32 characters. Generate with: openssl rand -base64 48"
+  );
+  process.exit(1);
 }
 
-// FIX: idinagdag ang "export" — kailangan ito ng fingerprintBridge.js
-export async function resolveEmployeeIdFromPin(pin) {
-  const trimmedPin = String(pin).trim();
+console.log("🔧 Starting server.js...");
 
-  const credRows = await q(
-    `SELECT employee_id FROM biometric_credentials
-     WHERE device_type = 'fingerprint' AND credential_id = :pin AND is_active = TRUE
-     LIMIT 1`,
-    { pin: trimmedPin }
-  );
-  if (credRows[0]) {
-    return { employee_id: credRows[0].employee_id, method: "biometric" };
-  }
+// ============================================================
+// Route imports
+// ============================================================
 
-  const empRows = await q(
-    `SELECT id FROM employees WHERE employee_code = :pin AND status = 'active' LIMIT 1`,
-    { pin: trimmedPin }
-  );
-  if (empRows[0]) {
-    return { employee_id: empRows[0].id, method: "manual" };
-  }
+import authRoutes from "./routes/auth.js";
+import mfaRoutes from "./routes/mfa.js";
+import employeesRoutes from "./routes/employees.js";
+import departmentsRoutes from "./routes/departments.js";
+import attendanceRoutes from "./routes/attendance.js";
+import leaveRequestsRoutes from "./routes/leaveRequests.js";
+import biometricRoutes from "./routes/biometric.js";
+import auditLogsRoutes from "./routes/auditLogs.js";
+import dashboardRoutes from "./routes/dashboard.js";
+import usersRoutes from "./routes/users.js";
+import shiftsRoutes from "./routes/shifts.js";
+import notificationsRoutes from "./routes/notifications.js";
+import settingsRoutes from "./routes/settings.js";
+import timesheetsRoutes from "./routes/timesheets.js";
+import reportsRoutes from "./routes/reports.js";
+import deviceAttendanceRoutes from "./routes/deviceattendance.js";
+import partnerAttendanceRoutes from "./routes/partnerAttendance.js";
+import fingerprintBridgeRoutes from "./routes/fingerprintBridge.js"; // FIX: dati wala itong import
+import { pingDb } from "./db.js"; // FIX: para ma-verify agad ang DB connection sa startup
 
-  return { employee_id: null, method: null };
+console.log("✅ All route files imported.");
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+const app = express();
+
+app.set("trust proxy", 1);
+
+// ============================================================
+// 🔒 HELMET — Security headers
+// ============================================================
+
+app.use(
+  helmet({
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'self'"],
+        scriptSrc: ["'self'", "'unsafe-inline'"],
+        styleSrc: [
+          "'self'",
+          "'unsafe-inline'",
+          "https://fonts.googleapis.com",
+        ],
+        imgSrc: ["'self'", "data:", "blob:"],
+        connectSrc: ["'self'", "https://cdn.jsdelivr.net"],
+        fontSrc: [
+          "'self'",
+          "data:",
+          "https://fonts.gstatic.com",
+        ],
+        objectSrc: ["'none'"],
+        frameAncestors: ["'none'"],
+      },
+    },
+    crossOriginEmbedderPolicy: false,
+  })
+);
+
+// ============================================================
+// 🔒 CORS — Explicit origins, no wildcard in production
+// ============================================================
+
+const rawCors = process.env.CORS_ORIGIN ?? "http://localhost:5173";
+
+const allowedOrigins = rawCors
+  .split(",")
+  .map((o) => o.trim())
+  .filter(Boolean);
+
+if (process.env.NODE_ENV === "production" && allowedOrigins.includes("*")) {
+  console.error("❌ Fatal: Cannot use wildcard CORS in production.");
+  process.exit(1);
 }
 
-// FIX: idinagdag ang "export" — kailangan ito ng fingerprintBridge.js
-export async function processPunch(employee_id, dateStr, timeStr, deviceSN, method) {
-  const settings = await getSettings([
-    "late_threshold_minutes",
-    "overtime_threshold_hours",
-  ]);
+console.log("🌐 Allowed CORS origins:", allowedOrigins);
 
-  const shiftRows = await q(
-    `SELECT s.start_time FROM employee_shifts es JOIN shifts s ON s.id = es.shift_id
-     WHERE es.employee_id = :employee_id AND es.date = :dateStr LIMIT 1`,
-    { employee_id, dateStr }
-  );
-  const shiftStart = shiftRows[0]?.start_time ?? null;
+app.use(
+  cors({
+    origin: (origin, callback) => {
+      if (!origin) return callback(null, true);
+      if (allowedOrigins.includes(origin)) return callback(null, true);
+      console.warn(`⚠️ CORS blocked: ${origin}`);
+      return callback(new Error(`CORS: origin ${origin} not allowed`));
+    },
+    credentials: true,
+    methods: ["GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With", "x-bridge-key"],
+  })
+);
 
-  const existing = await q(
-    "SELECT id, check_in, check_out FROM attendance WHERE employee_id = :employee_id AND date = :dateStr",
-    { employee_id, dateStr }
-  );
-
-  const lastLogRows = await q(
-    `SELECT type FROM attendance_logs
-     WHERE employee_id = :employee_id AND DATE(timestamp) = :dateStr
-     ORDER BY timestamp DESC LIMIT 1`,
-    { employee_id, dateStr }
-  );
-  const lastType = lastLogRows[0]?.type ?? null;
-
-  const logType =
-    !lastType || lastType === "check_out" ? "check_in" : "check_out";
-
-  if (logType === "check_in") {
-    if (!existing[0]) {
-      let status = "present";
-      if (shiftStart) {
-        const lateThreshold = settings.late_threshold_minutes ?? 15;
-        if (
-          timeToMinutes(timeStr) >
-          timeToMinutes(shiftStart) + lateThreshold
-        )
-          status = "late";
+// ============================================================
+// 🔒 REQUEST TIMEOUT SAFETY NET — FIX
+// ============================================================
+// Kung may async route/middleware (hal. requireAuth) na mag-throw ng error
+// (gaya ng ETIMEDOUT papunta sa DB) na walang try/catch + next(err), hindi
+// ito naka-catch ng Express 4 — nagiging "unhandled rejection" na lang ito
+// (makikita sa logs), at WALANG response na ipinapadala sa client, kaya
+// nag-hha-hang ang request hanggang mag-timeout na lang sa frontend side.
+// Ito ang safety net: kung lumagpas ang isang request nang 15s nang walang
+// response, agad na magpapadala ng malinaw na 503 sa client.
+function requestTimeout(ms) {
+  return (req, res, next) => {
+    const timer = setTimeout(() => {
+      if (!res.headersSent) {
+        console.error(`⏱️ Request timeout (${ms}ms): ${req.method} ${req.originalUrl}`);
+        res.status(503).json({ error: "Request timed out. Please try again." });
       }
-      await q(
-        `INSERT INTO attendance (id, employee_id, date, check_in, status) VALUES (:id, :employee_id, :dateStr, :t, :status)`,
-        {
-          id: crypto.randomUUID(),
-          employee_id,
-          dateStr,
-          t: timeStr,
-          status,
-        }
-      );
-    }
-  } else {
-    const referenceCheckIn = existing[0]?.check_in ?? timeStr;
-    const inMinutes = timeToMinutes(referenceCheckIn);
-    const outMinutes = timeToMinutes(timeStr);
-    const workHours = Math.max(0, (outMinutes - inMinutes) / 60);
-    const overtimeThreshold = settings.overtime_threshold_hours ?? 8;
-    const overtimeHours = Math.max(0, workHours - overtimeThreshold);
-
-    if (existing[0]) {
-      await q(
-        "UPDATE attendance SET check_out = :t, work_hours = :wh, overtime_hours = :oh WHERE id = :id",
-        {
-          t: timeStr,
-          wh: workHours.toFixed(2),
-          oh: overtimeHours.toFixed(2),
-          id: existing[0].id,
-        }
-      );
-    } else {
-      await q(
-        `INSERT INTO attendance (id, employee_id, date, check_out, work_hours, overtime_hours, status)
-         VALUES (:id, :employee_id, :dateStr, :t, :wh, :oh, 'present')`,
-        {
-          id: crypto.randomUUID(),
-          employee_id,
-          dateStr,
-          t: timeStr,
-          wh: workHours.toFixed(2),
-          oh: overtimeHours.toFixed(2),
-        }
-      );
-    }
-  }
-
-  await q(
-    `INSERT INTO attendance_logs (id, employee_id, timestamp, type, method, device_id)
-     VALUES (:id, :employee_id, :timestamp, :logType, :method, :device_id)`,
-    {
-      id: crypto.randomUUID(),
-      employee_id,
-      timestamp: `${dateStr} ${timeStr}`,
-      logType,
-      method: method === "manual" ? "manual" : "biometric",
-      device_id: deviceSN ?? "unknown",
-    }
-  );
-
-  return logType;
+    }, ms);
+    res.on("finish", () => clearTimeout(timer));
+    res.on("close", () => clearTimeout(timer));
+    next();
+  };
 }
 
-// -----------------------------------------------------------------------
-// 1) HANDSHAKE
-// -----------------------------------------------------------------------
-router.get("/cdata", async (req, res) => {
-  if (!isAuthorizedDevice(req)) {
-    return res.status(403).type("text/plain").send("FORBIDDEN");
-  }
+app.use(requestTimeout(15000)); // 15 segundo
 
-  const { SN, table } = req.query;
+// ============================================================
+// 🔒 RATE LIMITERS
+// ============================================================
+// FIX: Na-align na ang IP-based limiters papunta sa 1-minute window para
+// tugma sa graduated lockout ng auth.js (7 attempts = 1 min, 10+ = 5 min).
+// Dating 15-minute window ang authLimiter kaya may naiiwang "extra" na
+// lockout time kahit successful na yung susunod na login — hindi kasi
+// na-reset ang per-IP counter (memory-based ito, hiwalay sa database).
+//
+// Ang `max` dito ay sadyang ginawang MAS MATAAS (20) kaysa sa
+// FIRST_LOCKOUT_THRESHOLD (7) ng auth.js, para ang per-EMAIL na graduated
+// lockout ang laging unang mag-trigger — ang IP limiter na ito ay backstop
+// na lang laban sa mas malalaking brute-force (maraming account, iisang IP).
 
-  if (table === "ATTLOG" || table === "OPERLOG") {
-    return res.type("text/plain").send("OK");
-  }
-
-  console.log(`📟 Fingerprint device handshake — SN=${SN}`);
-  res.type("text/plain").send(
-    [
-      `GET OPTION FROM: ${SN}`,
-      "Stamp=9999",
-      "OpStamp=9999",
-      "ErrorDelay=30",
-      "Delay=30",
-      "TransFlag=TransData AttLog",
-      "TimeZone=8",
-      "Realtime=1",
-      "Encrypt=0",
-    ].join("\n")
-  );
+const generalLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 300,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Too many requests. Please slow down." },
 });
 
-// -----------------------------------------------------------------------
-// 2) ATTENDANCE PUSH
-// -----------------------------------------------------------------------
-router.post("/cdata", async (req, res) => {
-  if (!isAuthorizedDevice(req)) {
-    return res.status(403).type("text/plain").send("FORBIDDEN");
-  }
+const authLimiter = rateLimit({
+  windowMs: 60 * 1000, // FIX: 15 min -> 1 min
+  max: 20,             // FIX: 10 -> 20 (mas mataas sa 7-attempt threshold ng auth.js)
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Too many login attempts. Try again in 1 minute." },
+});
 
+const faceLimiter = rateLimit({
+  windowMs: 60 * 1000, // FIX: 15 min -> 1 min
+  max: 10,             // FIX: 5 -> 10
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Too many face login attempts. Try again in 1 minute." },
+});
+
+app.use("/api", generalLimiter);
+app.use("/api/auth/login", authLimiter);
+app.use("/api/auth/face-login", faceLimiter);
+app.use("/api/auth/verify-mfa", authLimiter);
+
+// ============================================================
+// ADMS/iClock listener — BAGO ang express.json()
+// ============================================================
+
+app.use("/iclock", deviceAttendanceRoutes);
+
+// ============================================================
+// 🔒 BODY PARSERS
+// ============================================================
+
+app.use(express.json({ limit: "1mb" }));
+app.use(express.urlencoded({ extended: true, limit: "1mb" }));
+
+// ============================================================
+// 🔒 CUSTOM JSON ERROR HANDLER
+// ============================================================
+
+app.use((err, req, res, next) => {
+  if (err instanceof SyntaxError && err.status === 400 && "body" in err) {
+    return res.status(400).json({ error: "Invalid JSON in request body." });
+  }
+  next(err);
+});
+
+// ============================================================
+// API Routes
+// ============================================================
+
+app.use("/api/auth", authRoutes);
+app.use("/api/mfa", mfaRoutes);
+app.use("/api/employees", employeesRoutes);
+app.use("/api/departments", departmentsRoutes);
+app.use("/api/attendance", attendanceRoutes);
+app.use("/api/leave-requests", leaveRequestsRoutes);
+app.use("/api/biometric-credentials", biometricRoutes);
+app.use("/api/audit-logs", auditLogsRoutes);
+app.use("/api/dashboard", dashboardRoutes);
+app.use("/api/users", usersRoutes);
+app.use("/api/shifts", shiftsRoutes);
+app.use("/api/notifications", notificationsRoutes);
+app.use("/api/settings", settingsRoutes);
+app.use("/api/timesheets", timesheetsRoutes);
+app.use("/api/reports", reportsRoutes);
+app.use("/api/partner/attendance", partnerAttendanceRoutes);
+app.use("/api/fingerprint-bridge", fingerprintBridgeRoutes); // FIX: dati wala itong mounting — ito ang dahilan bakit 404 lagi ang /punch
+
+app.get("/api/health", (req, res) => res.json({ ok: true }));
+
+// ============================================================
+// Serve built frontend (Vite output)
+// ============================================================
+
+const frontendPath = path.join(__dirname, "../../dist");
+
+console.log("📁 Serving frontend from dist folder");
+
+app.use(express.static(frontendPath));
+
+app.get(/^(?!.*\/api|.*\/iclock).*/, (req, res) => {
+  res.sendFile(path.join(frontendPath, "index.html"));
+});
+
+// ============================================================
+// 404 handler para sa /api routes
+// ============================================================
+
+app.use("/api", (req, res) => {
+  res.status(404).json({ error: "Endpoint not found." });
+});
+
+// ============================================================
+// 🔒 GLOBAL ERROR HANDLER
+// ============================================================
+
+app.use((err, req, res, next) => {
+  console.error("❌ Express error handler:", err);
+  if (res.headersSent) return next(err);
+  if (process.env.NODE_ENV === "production") {
+    return res.status(500).json({ error: "Internal server error." });
+  }
+  return res.status(500).json({ error: err.message ?? "Internal server error." });
+});
+
+// ============================================================
+// 🔒 PROCESS-LEVEL ERROR HANDLERS
+// ============================================================
+
+process.on("unhandledRejection", (err) => {
+  console.error("⚠️ Unhandled rejection:", err);
+});
+
+process.on("uncaughtException", (err) => {
+  console.error("❌ Uncaught exception — shutting down:", err);
+  process.exit(1);
+});
+
+// ============================================================
+// START SERVER
+// ============================================================
+
+const PORT = process.env.PORT ?? 3000;
+
+app.listen(PORT, "0.0.0.0", async () => {
+  console.log(`✅ Workforce API + Frontend running sa http://0.0.0.0:${PORT}`);
+
+  // FIX: agad na i-verify kung okay ang koneksyon sa database sa startup,
+  // para makita mo kaagad sa logs kung may problema, hindi na kailangang
+  // maghintay ng unang request bago malaman.
   try {
-    const { SN, table } = req.query;
-    if (table !== "ATTLOG") {
-      return res.type("text/plain").send("OK");
-    }
-
-    const body = typeof req.body === "string" ? req.body : "";
-    const lines = body
-      .split("\n")
-      .map((l) => l.trim())
-      .filter(Boolean)
-      .slice(0, 1000);
-
-    let processed = 0;
-    for (const line of lines) {
-      const parts = line.split("\t");
-      const pin = parts[0];
-      const timestamp = parts[1];
-      if (!pin || !timestamp) continue;
-
-      const { employee_id, method } = await resolveEmployeeIdFromPin(pin);
-      if (!employee_id) {
-        console.warn(
-          `⚠️  No employee linked to PIN/Employee Code "${pin}" (SN=${SN}).`
-        );
-        continue;
-      }
-
-      const [dateStr, timeStr] = timestamp.split(" ");
-      const logType = await processPunch(
-        employee_id,
-        dateStr,
-        timeStr,
-        SN,
-        method
-      );
-      console.log(
-        `✅ ${logType.toUpperCase()} logged for employee_id=${employee_id} (PIN/Code "${pin}", method=${method})`
-      );
-      processed++;
-    }
-
-    return res.type("text/plain").send(`OK: ${processed}`);
+    await pingDb();
   } catch (err) {
-    console.error("POST /iclock/cdata (ATTLOG) error:", err);
-    // Huwag i-leak ang error details sa device
-    return res.type("text/plain").send("OK");
+    console.error("🚨 Hindi makaconnect sa database sa startup:", err.message);
   }
 });
-
-// -----------------------------------------------------------------------
-// 3) COMMAND POLLING
-// -----------------------------------------------------------------------
-router.get("/getrequest", (req, res) => {
-  res.type("text/plain").send("OK");
-});
-
-// -----------------------------------------------------------------------
-// 4) COMMAND RESULT ACKNOWLEDGEMENT
-// -----------------------------------------------------------------------
-router.post("/devicecmd", (req, res) => {
-  res.type("text/plain").send("OK");
-});
-
-export default router;
