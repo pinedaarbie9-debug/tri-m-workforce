@@ -1,11 +1,7 @@
 // backend/src/server.js
 
-<<<<<<< HEAD
 // Last updated: 2026-09-26 — FIX: idinagdag ang fingerprintBridge route (dati'y wala sa mounting list)
 // Last updated: 2026-09-26 — FIX: idinagdag ang request timeout safety net (para sa hang/ETIMEDOUT sa unhandled async errors) + startup DB ping
-=======
-// Last updated: 2026-09-19
->>>>>>> c8b7bbaa890267b034c5fe45d41ed6f36d3f6117
 
 import express from "express";
 import cors from "cors";
@@ -60,11 +56,8 @@ import timesheetsRoutes from "./routes/timesheets.js";
 import reportsRoutes from "./routes/reports.js";
 import deviceAttendanceRoutes from "./routes/deviceattendance.js";
 import partnerAttendanceRoutes from "./routes/partnerAttendance.js";
-<<<<<<< HEAD
 import fingerprintBridgeRoutes from "./routes/fingerprintBridge.js"; // FIX: dati wala itong import
 import { pingDb } from "./db.js"; // FIX: para ma-verify agad ang DB connection sa startup
-=======
->>>>>>> c8b7bbaa890267b034c5fe45d41ed6f36d3f6117
 
 console.log("✅ All route files imported.");
 
@@ -133,16 +126,11 @@ app.use(
     },
     credentials: true,
     methods: ["GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"],
-<<<<<<< HEAD
     allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With", "x-bridge-key"],
-=======
-    allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With"],
->>>>>>> c8b7bbaa890267b034c5fe45d41ed6f36d3f6117
   })
 );
 
 // ============================================================
-<<<<<<< HEAD
 // 🔒 REQUEST TIMEOUT SAFETY NET — FIX
 // ============================================================
 // Kung may async route/middleware (hal. requireAuth) na mag-throw ng error
@@ -171,9 +159,6 @@ app.use(requestTimeout(15000)); // 15 segundo
 // ============================================================
 // 🔒 RATE LIMITERS
 // ============================================================
-=======
-// 🔒 RATE LIMITERS
-// ============================================================
 // FIX: Na-align na ang IP-based limiters papunta sa 1-minute window para
 // tugma sa graduated lockout ng auth.js (7 attempts = 1 min, 10+ = 5 min).
 // Dating 15-minute window ang authLimiter kaya may naiiwang "extra" na
@@ -184,7 +169,6 @@ app.use(requestTimeout(15000)); // 15 segundo
 // FIRST_LOCKOUT_THRESHOLD (7) ng auth.js, para ang per-EMAIL na graduated
 // lockout ang laging unang mag-trigger — ang IP limiter na ito ay backstop
 // na lang laban sa mas malalaking brute-force (maraming account, iisang IP).
->>>>>>> c8b7bbaa890267b034c5fe45d41ed6f36d3f6117
 
 const generalLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
@@ -195,26 +179,11 @@ const generalLimiter = rateLimit({
 });
 
 const authLimiter = rateLimit({
-<<<<<<< HEAD
-  windowMs: 60 * 1000,
-  max: 20,
-  standardHeaders: true,
-  legacyHeaders: false,
-  message: { error: "Too many login attempts. Try again in 1 minute." },
-});
-
-const faceLimiter = rateLimit({
-  windowMs: 60 * 1000,
-  max: 10,
-  standardHeaders: true,
-  legacyHeaders: false,
-  message: { error: "Too many face login attempts. Try again in 1 minute." },
-=======
   windowMs: 60 * 1000, // FIX: 15 min -> 1 min
   max: 20,             // FIX: 10 -> 20 (mas mataas sa 7-attempt threshold ng auth.js)
   standardHeaders: true,
   legacyHeaders: false,
-  message: { error: "Too many login attempts. Try again in 1 minute." }, // FIX: text updated
+  message: { error: "Too many login attempts. Try again in 1 minute." },
 });
 
 const faceLimiter = rateLimit({
@@ -222,8 +191,7 @@ const faceLimiter = rateLimit({
   max: 10,             // FIX: 5 -> 10
   standardHeaders: true,
   legacyHeaders: false,
-  message: { error: "Too many face login attempts. Try again in 1 minute." }, // FIX: text updated
->>>>>>> c8b7bbaa890267b034c5fe45d41ed6f36d3f6117
+  message: { error: "Too many face login attempts. Try again in 1 minute." },
 });
 
 app.use("/api", generalLimiter);
@@ -275,10 +243,7 @@ app.use("/api/settings", settingsRoutes);
 app.use("/api/timesheets", timesheetsRoutes);
 app.use("/api/reports", reportsRoutes);
 app.use("/api/partner/attendance", partnerAttendanceRoutes);
-<<<<<<< HEAD
 app.use("/api/fingerprint-bridge", fingerprintBridgeRoutes); // FIX: dati wala itong mounting — ito ang dahilan bakit 404 lagi ang /punch
-=======
->>>>>>> c8b7bbaa890267b034c5fe45d41ed6f36d3f6117
 
 app.get("/api/health", (req, res) => res.json({ ok: true }));
 
@@ -310,10 +275,7 @@ app.use("/api", (req, res) => {
 
 app.use((err, req, res, next) => {
   console.error("❌ Express error handler:", err);
-<<<<<<< HEAD
   if (res.headersSent) return next(err);
-=======
->>>>>>> c8b7bbaa890267b034c5fe45d41ed6f36d3f6117
   if (process.env.NODE_ENV === "production") {
     return res.status(500).json({ error: "Internal server error." });
   }
@@ -339,7 +301,6 @@ process.on("uncaughtException", (err) => {
 
 const PORT = process.env.PORT ?? 3000;
 
-<<<<<<< HEAD
 app.listen(PORT, "0.0.0.0", async () => {
   console.log(`✅ Workforce API + Frontend running sa http://0.0.0.0:${PORT}`);
 
@@ -351,8 +312,4 @@ app.listen(PORT, "0.0.0.0", async () => {
   } catch (err) {
     console.error("🚨 Hindi makaconnect sa database sa startup:", err.message);
   }
-=======
-app.listen(PORT, "0.0.0.0", () => {
-  console.log(`✅ Workforce API + Frontend running sa http://0.0.0.0:${PORT}`);
->>>>>>> c8b7bbaa890267b034c5fe45d41ed6f36d3f6117
-});
+});   
