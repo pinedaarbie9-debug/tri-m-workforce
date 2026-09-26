@@ -742,4 +742,4 @@ export function BiometricPage() {
       </Dialog>
     </div>
   );
-}
+} 
