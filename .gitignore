@@ -1,0 +1,33 @@
+# Dependencies
+node_modules/
+backend/node_modules/
+*/node_modules/
+
+# Environment Variables (SENSITIVE!)
+.env
+.env.local
+.env.development
+.env.production
+.env.*.local
+backend/.env
+
+# Build Output
+build/
+backend/dist/
+
+# Logs
+*.log
+npm-debug.log*
+
+# IDE / Editor
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+
+# Test Scripts
+test-all.ps1
+test-api.ps1
+backend/test-all.ps1
+backend/test-api.ps1

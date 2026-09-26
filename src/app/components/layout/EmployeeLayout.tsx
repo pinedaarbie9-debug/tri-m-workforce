@@ -1,0 +1,80 @@
+// src/app/components/layout/EmployeeLayout.tsx
+import { useState, useEffect } from "react";
+import { Outlet, useLocation } from "react-router";
+import { EmployeeSidebar } from "./EmployeeSidebar";
+import { TopBar } from "./TopBar";
+
+export function EmployeeLayout() {
+  const [collapsed, setCollapsed] = useState(false);
+  const [mobileOpen, setMobileOpen] = useState(false);
+  const location = useLocation();
+
+  // 🔒 Auto-close mobile drawer kapag nag-navigate
+  useEffect(() => {
+    setMobileOpen(false);
+  }, [location.pathname]);
+
+  // 🔒 Close mobile drawer sa Escape key
+  useEffect(() => {
+    if (!mobileOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setMobileOpen(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [mobileOpen]);
+
+  return (
+    <div className="flex h-screen overflow-hidden bg-background">
+      {/* 🔒 Accessibility: Skip to main content */}
+      <a
+        href="#main-content"
+        className="sr-only focus:not-sr-only focus:absolute focus:top-2 focus:left-2 focus:z-50 focus:px-4 focus:py-2 focus:bg-primary focus:text-white focus:rounded-lg"
+      >
+        Skip to main content
+      </a>
+
+      {/* 🔒 Desktop sidebar */}
+      <div className="hidden lg:flex">
+        <EmployeeSidebar
+          collapsed={collapsed}
+          onToggle={() => setCollapsed((c) => !c)}
+        />
+      </div>
+
+      {/* 🔒 Mobile drawer */}
+      {mobileOpen && (
+        <>
+          <div
+            className="fixed inset-0 bg-black/50 z-40 lg:hidden"
+            onClick={() => setMobileOpen(false)}
+            aria-hidden="true"
+          />
+          <div
+            className="fixed inset-y-0 left-0 z-50 lg:hidden"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Navigation menu"
+          >
+            <EmployeeSidebar
+              collapsed={false}
+              onToggle={() => setMobileOpen(false)}
+            />
+          </div>
+        </>
+      )}
+
+      {/* 🔒 Main content */}
+      <div className="flex flex-col flex-1 overflow-hidden min-w-0">
+        <TopBar onMenuClick={() => setMobileOpen(true)} />
+        <main
+          id="main-content"
+          className="flex-1 overflow-y-auto"
+          tabIndex={-1}
+        >
+          <Outlet />
+        </main>
+      </div>
+    </div>
+  );
+}
