@@ -7,28 +7,30 @@ FROM node:22-alpine
 WORKDIR /app
 
 # ============================================================
-# Copy files
+# Copy backend package files
 # ============================================================
-# Copy backend (for npm ci)
 COPY backend/package.json backend/package-lock.json* ./backend/
 
-# Install backend dependencies (cached layer)
-RUN --mount=type=cache,target=/root/.npm,sharing=locked cd backend && npm ci
+# Install backend dependencies (NO cache mount so node_modules persists in final image)
+RUN cd backend && npm ci --omit=dev
 
-# Copy backend source
+# ============================================================
+# Copy backend source code
+# ============================================================
 COPY backend/src ./backend/src
-COPY backend/package.json ./backend/package.json
 
+# ============================================================
 # Copy pre-built frontend
+# ============================================================
 COPY dist ./dist
 
 # ============================================================
 # Verify na nandiyan yung files (para makita sa build logs)
 # ============================================================
 RUN echo "=== /app contents ===" && ls -la /app && \
-    echo "=== /app/dist contents ===" && ls -la /app/dist && \
-    echo "=== /app/dist/assets contents ===" && ls -la /app/dist/assets && \
-    echo "=== /app/backend contents ===" && ls -la /app/backend
+    echo "=== /app/backend contents ===" && ls -la /app/backend && \
+    echo "=== Check express ===" && ls -la /app/backend/node_modules/express/package.json && \
+    echo "=== Check pg ===" && ls -la /app/backend/node_modules/pg/package.json
 
 # ============================================================
 # Environment
@@ -38,7 +40,7 @@ ENV PORT=3000
 
 EXPOSE 3000
 
-WORKDIR /app
-
+# ============================================================
 # Start the backend server
+# ============================================================
 CMD ["node", "backend/src/server.js"]
