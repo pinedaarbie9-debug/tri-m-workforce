@@ -17,6 +17,12 @@ import {
   DialogTitle,
 } from "../../components/ui/dialog";
 import { api } from "../../../lib/api";
+import {
+  LEAVE_TYPE_LABELS,
+  LEAVE_TYPE_OPTIONS,
+  leaveLabel,
+} from "../../../lib/leaveTypes";
+import type { LeaveType, LeaveBalance } from "../../../types";
 
 const statusConfig: Record<
   string,
@@ -51,15 +57,6 @@ interface AttachmentData {
   size: number;
 }
 
-type LeaveType =
-  | "annual"
-  | "sick"
-  | "maternity"
-  | "paternity"
-  | "unpaid"
-  | "emergency"
-  | "compensatory";
-
 const emptyForm: {
   leave_type: LeaveType;
   start_date: string;
@@ -88,6 +85,8 @@ export function MyLeavePage() {
 
   const [myProfile, setMyProfile] = useState<any>(null);
   const [profileLoading, setProfileLoading] = useState(true);
+
+  const [balance, setBalance] = useState<LeaveBalance | null>(null);
 
   const [showModal, setShowModal] = useState(false);
   const [form, setForm] = useState(emptyForm);
@@ -121,18 +120,40 @@ export function MyLeavePage() {
     }
   }, []);
 
+  // Balance at eligibility mula sa backend (GET /leave-requests/me/balance)
+  const fetchBalance = useCallback(async () => {
+    try {
+      const fn = (api as any).getMyLeaveBalance;
+      if (typeof fn !== "function") {
+        setBalance(null);
+        return;
+      }
+      const data = await fn.call(api);
+      setBalance(data);
+    } catch (err: any) {
+      console.error("Failed to fetch leave balance:", err);
+      setBalance(null);
+    }
+  }, []);
+
   useEffect(() => {
     fetchLeaves();
     fetchMyProfile();
-  }, [fetchLeaves, fetchMyProfile]);
+    fetchBalance();
+  }, [fetchLeaves, fetchMyProfile, fetchBalance]);
 
-  const isRegular =
-    myProfile?.employment_type === "regular" &&
-    myProfile?.status === "active";
+  // Active na empleyado lang ang pwedeng mag-file.
+  // Ang eligibility bawat leave type ay sinusuri ng backend.
+  const canFile = myProfile?.status === "active";
 
   const employmentLabel = String(myProfile?.employment_type ?? "")
     .replace("_", " ")
     .replace(/\b\w/g, (c) => c.toUpperCase());
+
+  const byType = Object.fromEntries(
+    (balance?.balances ?? []).map((b) => [b.leave_type, b])
+  );
+  const selected = byType[form.leave_type];
 
   function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -184,7 +205,9 @@ export function MyLeavePage() {
 
   // 🔒 Open modal — WALANG password
   function openModal() {
-    setForm(emptyForm);
+    const firstEligible =
+      LEAVE_TYPE_OPTIONS.find((t) => byType[t]?.eligible) ?? "annual";
+    setForm({ ...emptyForm, leave_type: firstEligible });
     setFormError(null);
     setAttachment(null);
     setShowModal(true);
@@ -194,10 +217,13 @@ export function MyLeavePage() {
     e.preventDefault();
     setFormError(null);
 
-    if (!isRegular) {
-      setFormError(
-        `Only regular employees can file leave requests. Your employment type is "${employmentLabel}".`
-      );
+    if (!canFile) {
+      setFormError("Your account is inactive. Please contact HR.");
+      return;
+    }
+
+    if (selected && !selected.eligible) {
+      setFormError(selected.reason ?? "You are not eligible for this leave type.");
       return;
     }
 
@@ -239,6 +265,7 @@ export function MyLeavePage() {
       setForm(emptyForm);
       setAttachment(null);
       fetchLeaves();
+      fetchBalance();
     } catch (err: any) {
       setFormError(err.message ?? "Nabigo ang pag-submit ng leave request.");
     } finally {
@@ -288,28 +315,72 @@ export function MyLeavePage() {
         </div>
       </motion.div>
 
-      {!profileLoading && !isRegular && (
+      {!profileLoading && myProfile && !canFile && (
         <div className="p-4 bg-amber-50 border border-amber-200 rounded-xl text-sm text-amber-800">
           <p className="font-medium">
             ⚠️ Hindi ka pwedeng mag-file ng leave request.
           </p>
           <p className="mt-1 text-xs">
-            Regular employees lang ang pwedeng mag-file ng leave. Ang iyong
-            employment type ay <strong>{employmentLabel}</strong>. Kung may
-            katanungan, makipag-ugnayan sa HR.
+            Hindi active ang iyong account. Makipag-ugnayan sa HR.
           </p>
+        </div>
+      )}
+
+      {!profileLoading && canFile && myProfile?.employment_type !== "regular" && (
+        <div className="p-4 bg-sky-50 border border-sky-200 rounded-xl text-sm text-sky-800">
+          <p className="font-medium">
+            Ang iyong employment type ay {employmentLabel}.
+          </p>
+          <p className="mt-1 text-xs">
+            Ang vacation, sick, emergency at unpaid leave ay para sa regular
+            employees lang. Puwede kang mag-file ng leave na batay sa batas
+            kung kuwalipikado ka (halimbawa, may sapat na buwan ng serbisyo).
+          </p>
+        </div>
+      )}
+
+      {balance && (
+        <div className="space-y-2">
+          <h2 className="text-sm font-semibold text-foreground">
+            Leave Balance ({balance.year})
+          </h2>
+          <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
+            {balance.balances.map((b) => (
+              <div
+                key={b.leave_type}
+                title={b.eligible ? b.basis : b.reason ?? "Not eligible"}
+                className={`rounded-xl border p-3 text-xs ${
+                  b.eligible
+                    ? "bg-card border-border"
+                    : "bg-muted/40 border-border opacity-60"
+                }`}
+              >
+                <p className="font-medium text-foreground truncate">
+                  {LEAVE_TYPE_LABELS[b.leave_type] ?? b.label}
+                </p>
+                <p className="text-muted-foreground mt-1">
+                  {!b.eligible
+                    ? "Not eligible"
+                    : b.yearly_limit !== null
+                    ? `${b.remaining} of ${b.yearly_limit} days left`
+                    : b.max_per_request
+                    ? `Up to ${b.max_per_request} days`
+                    : "No fixed limit"}
+                </p>
+                <p className="text-[10px] text-muted-foreground/70 mt-0.5 truncate">
+                  {b.basis}
+                </p>
+              </div>
+            ))}
+          </div>
         </div>
       )}
 
       <div className="flex justify-end">
         <button
           onClick={openModal}
-          disabled={!isRegular}
-          title={
-            !isRegular
-              ? `Regular employees only. Your type: ${employmentLabel}`
-              : "New leave request"
-          }
+          disabled={!canFile}
+          title={!canFile ? "Your account is inactive" : "New leave request"}
           className="flex items-center gap-2 px-4 py-2.5 text-sm bg-primary text-white rounded-xl hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
         >
           <Plus className="w-4 h-4" /> New Request
@@ -354,8 +425,8 @@ export function MyLeavePage() {
                   const Icon = cfg.icon;
                   return (
                     <tr key={leave.id} className="hover:bg-muted/20 transition-colors">
-                      <td className="px-5 py-4 text-sm text-foreground capitalize">
-                        {leave.leave_type.replace("_", " ")}
+                      <td className="px-5 py-4 text-sm text-foreground">
+                        {leaveLabel(leave.leave_type)}
                       </td>
                       <td className="px-5 py-4 text-sm text-muted-foreground">
                         {leave.start_date} → {leave.end_date}
@@ -405,14 +476,28 @@ export function MyLeavePage() {
                 required
                 className="w-full px-3.5 py-2.5 rounded-lg border border-border bg-input-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/20"
               >
-                <option value="annual">Annual</option>
-                <option value="sick">Sick</option>
-                <option value="maternity">Maternity</option>
-                <option value="paternity">Paternity</option>
-                <option value="unpaid">Unpaid</option>
-                <option value="emergency">Emergency</option>
-                <option value="compensatory">Compensatory</option>
+                {LEAVE_TYPE_OPTIONS.map((t) => {
+                  const b = byType[t];
+                  const disabled = b ? !b.eligible : false;
+                  return (
+                    <option key={t} value={t} disabled={disabled}>
+                      {LEAVE_TYPE_LABELS[t]}
+                      {disabled ? " (not eligible)" : ""}
+                    </option>
+                  );
+                })}
               </select>
+              {selected && (
+                <p className="text-[10px] text-muted-foreground">
+                  {selected.basis}
+                  {selected.max_per_request
+                    ? ` · max ${selected.max_per_request} days per request`
+                    : ""}
+                  {selected.yearly_limit !== null
+                    ? ` · ${selected.remaining} of ${selected.yearly_limit} days left this year`
+                    : ""}
+                </p>
+              )}
             </div>
 
             <div className="grid grid-cols-2 gap-3">
@@ -518,7 +603,7 @@ export function MyLeavePage() {
               </button>
               <button
                 type="submit"
-                disabled={saving || !isRegular}
+                disabled={saving || !canFile || (selected ? !selected.eligible : false)}
                 className="px-4 py-2 text-sm bg-primary text-white rounded-lg hover:bg-primary/90 disabled:opacity-60 transition-colors"
               >
                 {saving ? "Submitting..." : "Submit Request"}

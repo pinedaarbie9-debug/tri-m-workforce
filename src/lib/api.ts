@@ -1,6 +1,8 @@
 // src/lib/api.ts
 // Secure API wrapper para sa Express backend
 
+import type { LeaveBalance } from "../types";
+
 // ============================================================
 // 🔒 API URL Resolution
 // ============================================================
@@ -238,7 +240,7 @@ export const api = {
     }),
   me: () => request<any>("/auth/me"),
   logout: () => request<{ ok: true }>("/auth/logout", { method: "POST" }),
- verifyPassword: (password: string) =>
+  verifyPassword: (password: string) =>
     request<{ ok: true }>("/auth/verify-password", {
       method: "POST",
       body: JSON.stringify({ password }),
@@ -438,6 +440,8 @@ export const api = {
     return request<any[]>(`/attendance/me${qs}`);
   },
   getMyLeaveRequests: () => request<any[]>("/leave-requests/me"),
+  // 🆕 Leave balance at eligibility bawat leave type
+  getMyLeaveBalance: () => request<LeaveBalance>("/leave-requests/me/balance"),
   createMyLeaveRequest: (data: any) =>
     request<{ id: string }>("/leave-requests/me", {
       method: "POST",

@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { q } from "../db.js";
 import { resolveEmployeeIdFromPin, processPunch } from "./deviceattendance.js";
-
+import { nowManila } from "../utils/helpers.js";
 const router = Router();
 
 // -----------------------------------------------------------------------
@@ -107,9 +107,7 @@ router.post("/punch", async (req, res) => {
       return res.status(404).json({ error: `Walang empleyadong naka-link sa PIN "${credential_id}".` });
     }
 
-    const now = new Date();
-    const dateStr = now.toISOString().slice(0, 10);
-    const timeStr = now.toTimeString().slice(0, 8);
+    const { dateStr, timeStr } = nowManila();
 
     const logType = await processPunch(employee_id, dateStr, timeStr, "ZK9500-USB", method);
 

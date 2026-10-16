@@ -139,11 +139,15 @@ export interface EmployeeShift {
 export type LeaveType =
   | "annual"
   | "sick"
+  | "emergency"
+  | "unpaid"
+  | "compensatory"
+  | "service_incentive"
   | "maternity"
   | "paternity"
-  | "unpaid"
-  | "emergency"
-  | "compensatory";
+  | "solo_parent"
+  | "vawc"
+  | "special_women";
 
 export type LeaveStatus = "pending" | "approved" | "rejected" | "cancelled";
 
@@ -163,6 +167,25 @@ export interface LeaveRequest {
   rejection_reason?: string;
   created_at: string;
   updated_at: string;
+}
+
+export interface LeaveBalanceItem {
+  leave_type: LeaveType;
+  label: string;
+  basis: string;
+  eligible: boolean;
+  reason: string | null;
+  yearly_limit: number | null;
+  max_per_request: number | null;
+  used: number;
+  remaining: number | null;
+}
+
+export interface LeaveBalance {
+  year: number;
+  employment_type: EmploymentType;
+  hire_date: string | null;
+  balances: LeaveBalanceItem[];
 }
 
 export type TimesheetStatus = "draft" | "submitted" | "approved" | "rejected";

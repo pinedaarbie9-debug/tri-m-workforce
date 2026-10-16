@@ -1,63 +1,104 @@
-import mysql from "mysql2/promise";
+import pg from "pg";
 import dotenv from "dotenv";
 dotenv.config();
 
-export const pool = mysql.createPool({
-  host: process.env.DB_HOST ?? "localhost",
-  port: Number(process.env.DB_PORT ?? 3306),
-  user: process.env.DB_USER ?? "root",
-  password: process.env.DB_PASSWORD ?? "",
-  database: process.env.DB_NAME ?? "workforce_db",
-  waitForConnections: true,
-  connectionLimit: 10,
-  queueLimit: 0,
-  namedPlaceholders: true,
+const { Pool, types } = pg;
+const TZ = process.env.APP_TIMEZONE ?? "Asia/Manila";
 
-  // Mas mahaba ang timeout bago mag-give up sa paggawa ng koneksyon —
-  // importante ito para sa proxied host gaya ng Railway (sakura.proxy.rlwy.net),
-  // dahil mas mabagal ang round-trip kesa sa local DB.
-  connectTimeout: 20000, // 20 segundo
+types.setTypeParser(20, (v) => parseInt(v, 10)); // bigint (COUNT) -> number
+types.setTypeParser(1082, (v) => v);             // DATE -> "YYYY-MM-DD"
 
-  // Pinapanatiling "buhay" ang mga idle connection sa pool para hindi
-  // basta i-drop ng Railway proxy pagkatapos ng ilang minuto ng katahimikan.
-  enableKeepAlive: true,
-  keepAliveInitialDelay: 10000,
+export const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: process.env.DB_SSL === "true" ? { rejectUnauthorized: false } : undefined,
+  max: 10,
+  connectionTimeoutMillis: 20000,
+  idleTimeoutMillis: 30000,
+  keepAlive: true,
 });
 
-// Maikling helper — tumatawag ng query at ibinabalik agad ang rows.
-// May retry (1x lang) kung ang error ay connection-related (timeout/reset),
-// dahil kadalasan gumagana na ang pangalawang subok pagkatapos mag-refresh
-// ang pool ng koneksyon.
-const RETRYABLE_CODES = new Set([
-  "ETIMEDOUT",
-  "ECONNRESET",
-  "PROTOCOL_CONNECTION_LOST",
-  "ECONNREFUSED",
-]);
+// Para tama ang NOW() / CURRENT_DATE sa oras ng Pilipinas
+pool.on("connect", (client) => {
+  client.query(`SET TIME ZONE '${TZ}'`).catch((e) =>
+    console.error("⚠️ Failed to set timezone:", e.message)
+  );
+});
+pool.on("error", (err) => console.error("⚠️ Idle PG client error:", err.message));
+
+// ":name" -> "$n", `backtick` -> "double quote". Hindi ginagalaw ang string literals at "::" casts.
+function convertQuery(sql, params = {}) {
+  const values = [];
+  const positions = new Map();
+  let out = "";
+  let i = 0;
+  const n = sql.length;
+
+  while (i < n) {
+    const ch = sql[i];
+
+    if (ch === "'") {
+      let j = i + 1;
+      while (j < n) {
+        if (sql[j] === "'" && sql[j + 1] === "'") { j += 2; continue; }
+        if (sql[j] === "'") break;
+        j++;
+      }
+      out += sql.slice(i, j + 1);
+      i = j + 1;
+      continue;
+    }
+
+    if (ch === "`") {
+      const j = sql.indexOf("`", i + 1);
+      if (j !== -1) { out += `"${sql.slice(i + 1, j)}"`; i = j + 1; continue; }
+    }
+
+    if (ch === ":") {
+      if (sql[i + 1] === ":") { out += "::"; i += 2; continue; }
+      const m = /^:([A-Za-z_]\w*)/.exec(sql.slice(i));
+      if (m) {
+        const name = m[1];
+        if (!(name in params)) throw new Error(`Missing SQL parameter :${name}`);
+        if (!positions.has(name)) {
+          let v = params[name];
+          if (v === undefined) v = null;
+          if (v !== null && typeof v === "object" && !(v instanceof Date) && !Buffer.isBuffer(v)) {
+            v = JSON.stringify(v);
+          }
+          values.push(v);
+          positions.set(name, values.length);
+        }
+        out += `$${positions.get(name)}`;
+        i += m[0].length;
+        continue;
+      }
+    }
+
+    out += ch;
+    i++;
+  }
+  return { text: out, values };
+}
+
+const RETRYABLE_CODES = new Set(["ETIMEDOUT", "ECONNRESET", "ECONNREFUSED", "57P01", "08006", "08003"]);
 
 export async function q(sql, params = {}, _isRetry = false) {
   try {
-    const [rows] = await pool.query(sql, params);
-    return rows;
+    const { text, values } = convertQuery(sql, params);
+    const result = await pool.query(text, values);
+    return result.rows;
   } catch (err) {
     if (!_isRetry && RETRYABLE_CODES.has(err.code)) {
       console.warn(`⚠️ DB query failed (${err.code}), retrying once...`);
       await new Promise((r) => setTimeout(r, 500));
       return q(sql, params, true);
     }
-    console.error("❌ DB query error:", err.code ?? err.message);
+    console.error("❌ DB query error:", err.code ?? err.message, err.detail ?? "");
     throw err;
   }
 }
 
-// Opsyonal: tawagin ito sa server startup para agad malaman kung
-// may problema sa koneksyon bago pa tumanggap ng requests.
 export async function pingDb() {
-  const conn = await pool.getConnection();
-  try {
-    await conn.ping();
-    console.log("✅ DB connection OK");
-  } finally {
-    conn.release();
-  }
+  await pool.query("SELECT 1");
+  console.log("✅ DB connection OK");
 }

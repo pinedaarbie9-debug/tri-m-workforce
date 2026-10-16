@@ -8,6 +8,12 @@ import { motion, AnimatePresence } from "motion/react";
 import { api } from "../../lib/api";
 import { PasswordPrompt } from "../components/PasswordPrompt";
 import type { LeaveRequest, LeaveStatus, LeaveType } from "../../types";
+import {
+  LEAVE_TYPE_LABELS,
+  LEAVE_TYPE_COLORS,
+  LEAVE_TYPE_OPTIONS,
+  leaveLabel,
+} from "../../lib/leaveTypes";
 
 const statusConfig: Record<
   LeaveStatus,
@@ -18,20 +24,6 @@ const statusConfig: Record<
   rejected: { label: "Rejected", className: "bg-red-100 text-red-700 border-red-200", icon: XCircle },
   cancelled: { label: "Cancelled", className: "bg-gray-100 text-gray-500 border-gray-200", icon: XCircle },
 };
-
-const leaveTypeColors: Record<LeaveType, string> = {
-  annual: "bg-blue-100 text-blue-700",
-  sick: "bg-red-100 text-red-700",
-  maternity: "bg-pink-100 text-pink-700",
-  paternity: "bg-indigo-100 text-indigo-700",
-  unpaid: "bg-gray-100 text-gray-600",
-  emergency: "bg-orange-100 text-orange-700",
-  compensatory: "bg-purple-100 text-purple-700",
-};
-
-const leaveTypeOptions: LeaveType[] = [
-  "annual", "sick", "maternity", "paternity", "unpaid", "emergency", "compensatory",
-];
 
 const POLL_MS = 15000;
 
@@ -61,7 +53,8 @@ function NewLeaveRequestModal({ onClose, onCreated }: { onClose: () => void; onC
   useEffect(() => {
     api.getEmployees()
       .then((data) => {
-        const eligible = data.filter((e: any) => e.employment_type === "regular" && e.status === "active");
+        // Active employees lang. Ang eligibility bawat leave type ay sinusuri ng backend.
+        const eligible = data.filter((e: any) => e.status === "active");
         setEmployees(eligible);
       })
       .catch((err) => setFormError(err.message ?? "Failed to load employees"))
@@ -148,20 +141,20 @@ function NewLeaveRequestModal({ onClose, onCreated }: { onClose: () => void; onC
           {formError && <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700">{formError}</div>}
           <div>
             <label className="text-xs font-medium text-muted-foreground">
-              Employee <span className="text-destructive">*</span> <span className="text-muted-foreground/60">(Regular + Active only)</span>
+              Employee <span className="text-destructive">*</span> <span className="text-muted-foreground/60">(Active only — eligibility is checked on submit)</span>
             </label>
             <select value={employeeId} onChange={(e) => setEmployeeId(e.target.value)} disabled={loadingEmployees || noEligible} required
               className="mt-1 w-full px-3 py-2 text-sm bg-background border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/20 disabled:opacity-60">
               <option value="">{loadingEmployees ? "Loading..." : noEligible ? "No eligible employees" : "Select employee"}</option>
               {employees.map((emp) => (<option key={emp.id} value={emp.id}>{emp.full_name}</option>))}
             </select>
-            {noEligible && <p className="text-[10px] text-amber-600 mt-1">Walang regular at active employees na pwedeng i-file ng leave.</p>}
+            {noEligible && <p className="text-[10px] text-amber-600 mt-1">Walang active na employees na pwedeng i-file ng leave.</p>}
           </div>
           <div>
             <label className="text-xs font-medium text-muted-foreground">Leave Type <span className="text-destructive">*</span></label>
             <select value={leaveType} onChange={(e) => setLeaveType(e.target.value as LeaveType)} required
-              className="mt-1 w-full px-3 py-2 text-sm bg-background border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/20 capitalize">
-              {leaveTypeOptions.map((t) => (<option key={t} value={t} className="capitalize">{t}</option>))}
+              className="mt-1 w-full px-3 py-2 text-sm bg-background border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/20">
+              {LEAVE_TYPE_OPTIONS.map((t) => (<option key={t} value={t}>{LEAVE_TYPE_LABELS[t]}</option>))}
             </select>
           </div>
           <div className="grid grid-cols-2 gap-3">
@@ -423,8 +416,8 @@ export function LeaveManagementPage() {
                         </div>
                       </td>
                       <td className="px-4 sm:px-5 py-4">
-                        <span className={`px-2 py-0.5 rounded-full text-xs font-medium capitalize whitespace-nowrap ${leaveTypeColors[leave.leave_type]}`}>
-                          {leave.leave_type.replace("_", " ")}
+                        <span className={`px-2 py-0.5 rounded-full text-xs font-medium whitespace-nowrap ${LEAVE_TYPE_COLORS[leave.leave_type] ?? "bg-gray-100 text-gray-600"}`}>
+                          {leaveLabel(leave.leave_type)}
                         </span>
                       </td>
                       <td className="px-4 sm:px-5 py-4 text-sm text-muted-foreground whitespace-nowrap">{leave.start_date} → {leave.end_date}</td>

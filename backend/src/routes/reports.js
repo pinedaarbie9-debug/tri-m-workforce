@@ -9,12 +9,9 @@ import { reportMonthSchema } from "../validators/businessValidator.js";
 
 const router = Router();
 router.use(requireAuth);
-
-// 🔒 Reports — MANAGEMENT (admin, hr_manager, supervisor)
 router.use(requireRole(...ROLE_GROUPS.REPORTERS));
 
-const FULL_NAME_SQL =
-  "COALESCE(NULLIF(e.full_name, ''), CONCAT(e.first_name, ' ', e.last_name))";
+const FULL_NAME_SQL = "COALESCE(NULLIF(e.full_name, ''), CONCAT(e.first_name, ' ', e.last_name))";
 
 router.get("/summary", async (req, res) => {
   try {
@@ -27,10 +24,7 @@ router.get("/summary", async (req, res) => {
       q("SELECT COUNT(*) AS c FROM audit_logs"),
     ]);
     const hasData = checks.map(([row]) => row.c > 0);
-    return res.json({
-      totalReports: 6,
-      ready: hasData.filter(Boolean).length,
-    });
+    return res.json({ totalReports: 6, ready: hasData.filter(Boolean).length });
   } catch (err) {
     return safeError(res, err, "Failed to load reports summary.");
   }
@@ -45,7 +39,7 @@ router.get("/attendance-summary", async (req, res) => {
     const rows = await q(
       `SELECT ${FULL_NAME_SQL} AS full_name, a.date, a.status, a.check_in, a.check_out, a.work_hours, a.overtime_hours
        FROM attendance a JOIN employees e ON e.id = a.employee_id
-       WHERE DATE_FORMAT(a.date, '%Y-%m') = :month
+       WHERE to_char(a.date, 'YYYY-MM') = :month
        ORDER BY a.date DESC`,
       { month }
     );
@@ -91,7 +85,7 @@ router.get("/overtime", async (req, res) => {
     const rows = await q(
       `SELECT ${FULL_NAME_SQL} AS full_name, SUM(a.overtime_hours) AS total_overtime
        FROM attendance a JOIN employees e ON e.id = a.employee_id
-       WHERE DATE_FORMAT(a.date, '%Y-%m') = :month AND a.overtime_hours > 0
+       WHERE to_char(a.date, 'YYYY-MM') = :month AND a.overtime_hours > 0
        GROUP BY e.id, e.full_name, e.first_name, e.last_name
        ORDER BY total_overtime DESC`,
       { month }
@@ -119,7 +113,7 @@ router.get("/timesheet", async (req, res) => {
 router.get("/audit-export", async (req, res) => {
   try {
     const rows = await q(`
-      SELECT al.action, al.module, al.record_id, al.created_at, u.full_name AS user
+      SELECT al.action, al.module, al.record_id, al.created_at, u.full_name AS "user"
       FROM audit_logs al LEFT JOIN users u ON u.id = al.user_id
       ORDER BY al.created_at DESC LIMIT 500
     `);

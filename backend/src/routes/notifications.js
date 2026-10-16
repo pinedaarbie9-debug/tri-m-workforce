@@ -28,7 +28,7 @@ router.get("/", async (req, res) => {
 router.get("/unread-count", async (req, res) => {
   try {
     const rows = await q(
-      "SELECT COUNT(*) as count FROM notifications WHERE user_id = :user_id AND is_read = 0",
+      "SELECT COUNT(*) as count FROM notifications WHERE user_id = :user_id AND is_read = FALSE",
       { user_id: req.user.id }
     );
     return res.json({ count: rows[0]?.count ?? 0 });
@@ -58,7 +58,7 @@ router.get("/me", async (req, res) => {
 router.patch("/read-all", async (req, res) => {
   try {
     await q(
-      "UPDATE notifications SET is_read = 1 WHERE user_id = :user_id",
+      "UPDATE notifications SET is_read = TRUE WHERE user_id = :user_id",
       { user_id: req.user.id }
     );
     return res.json({ ok: true });
@@ -73,7 +73,7 @@ router.patch("/read-all", async (req, res) => {
 router.patch("/:id/read", async (req, res) => {
   try {
     await q(
-      "UPDATE notifications SET is_read = 1 WHERE id = :id AND user_id = :user_id",
+      "UPDATE notifications SET is_read = TRUE WHERE id = :id AND user_id = :user_id",
       { id: req.params.id, user_id: req.user.id }
     );
     return res.json({ ok: true });

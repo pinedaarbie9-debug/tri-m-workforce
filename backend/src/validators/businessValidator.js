@@ -2,6 +2,7 @@
 // Zod v4 schemas para sa employees, attendance, biometric, mfa, shifts, timesheets
 
 import { z } from "zod";
+import { LEAVE_TYPES } from "../utils/leavePolicy.js";
 
 // ============================================================
 // SHARED
@@ -150,9 +151,8 @@ export const updateDepartmentSchema = createDepartmentSchema.partial();
 
 // ============================================================
 // LEAVE REQUESTS
+// (LEAVE_TYPES ay galing sa utils/leavePolicy.js)
 // ============================================================
-const LEAVE_TYPES = ["annual", "sick", "emergency", "unpaid", "maternity", "paternity"];
-
 const attachmentSchema = z.object({
   data: z
     .string({ required_error: "Attachment is required." })
