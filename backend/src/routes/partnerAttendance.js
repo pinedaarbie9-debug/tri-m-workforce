@@ -32,21 +32,18 @@ router.use(requireApiKey);
 // Helper: Hanapin ang employee base sa employee_id (flexible)
 // ============================================================
 async function findEmployeeByPartnerId(partnerId) {
-  // 1. Try exact match (e.g., "E001")
   let result = await q(
     "SELECT id, employee_code FROM employees WHERE employee_code = :emp_id",
     { emp_id: String(partnerId) }
   );
   if (result.length > 0) return result[0];
 
-  // 2. Try with "E" prefix (e.g., "195" -> "E195")
   result = await q(
     "SELECT id, employee_code FROM employees WHERE employee_code = :emp_id",
     { emp_id: `E${partnerId}` }
   );
   if (result.length > 0) return result[0];
 
-  // 3. Try with "EMP-" prefix (e.g., "195" -> "EMP-195")
   result = await q(
     "SELECT id, employee_code FROM employees WHERE employee_code = :emp_id",
     { emp_id: `EMP-${partnerId}` }
@@ -106,7 +103,6 @@ router.post("/sync-data", async (req, res) => {
 
     // --- 2. PROCESS LEAVES ---
     if (leaves && leaves.length > 0) {
-      // Hanapin ang admins para i-notify
       const admins = await q(`
         SELECT id FROM users 
         WHERE role IN ('admin', 'hr_manager') 
@@ -121,13 +117,14 @@ router.post("/sync-data", async (req, res) => {
             throw new Error(`Employee code ${lv.employee_id} not found in local DB.`);
           }
 
-          // Kunin ang reference_id kung meron (para may pang-balik tayo kay HR1)
+          // Kunin ang reference_id at reason (flexible sa field names)
           const referenceId = lv.reference_id || lv.leave_id || lv.id || null;
+          const leaveReason = lv.reason || lv.leave_reason || lv.notes || null;
 
-          // I-save ang leave (kasama ang reference_id)
+          // I-save ang leave (kasama ang reference_id at reason)
           await q(
-            `INSERT INTO leave_requests (employee_id, leave_type, start_date, end_date, days_count, status, reference_id)
-             VALUES (:employee_id, :leave_type, :start_date, :end_date, :days_count, :status, :reference_id)`,
+            `INSERT INTO leave_requests (employee_id, leave_type, start_date, end_date, days_count, status, reference_id, reason)
+             VALUES (:employee_id, :leave_type, :start_date, :end_date, :days_count, :status, :reference_id, :reason)`,
             {
               employee_id: employee.id,
               leave_type: lv.leave_type,
@@ -135,7 +132,8 @@ router.post("/sync-data", async (req, res) => {
               end_date: lv.end_date,
               days_count: lv.days_count || 1,
               status: lv.status,
-              reference_id: referenceId
+              reference_id: referenceId,
+              reason: leaveReason
             }
           );
 
@@ -180,7 +178,6 @@ router.post("/sync-data", async (req, res) => {
 
 // ============================================================
 // POST /api/partner/leave-status-update
-// (Ito yung tatawagin ng UI mo para mag-update ng status pabalik kay HR1)
 // ============================================================
 router.post("/leave-status-update", async (req, res) => {
   try {
@@ -190,13 +187,11 @@ router.post("/leave-status-update", async (req, res) => {
       return res.status(400).json({ error: "Missing reference_id or status." });
     }
 
-    // 1. I-update ang local DB
     await q(
       "UPDATE leave_requests SET status = :status, rejection_reason = :rejection_reason, updated_at = NOW() WHERE reference_id = :reference_id",
       { status, rejection_reason: rejection_reason || null, reference_id }
     );
 
-    // 2. I-send pabalik kay HR1
     const hr1WebhookUrl = "https://recruitment.mms-tmglt.com/api/v1/webhooks/hr2_leave_status.php";
     
     console.log(`⏳ Sending status update to HR1 for reference_id: ${reference_id}`);

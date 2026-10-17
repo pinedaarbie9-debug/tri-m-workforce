@@ -363,6 +363,22 @@ export const api = {
       method: "PATCH",
       body: JSON.stringify({ status }),
     }),
+  // 🆕 Idagdag ito para sa webhook papuntang HR1
+  updateLeaveStatusWebhook: (data: {
+    reference_id: string;
+    status: "approved" | "rejected";
+    rejection_reason: string | null;
+  }) =>
+    request<{ success: boolean; message: string; hr1_response?: any }>(
+      "/partner/leave-status-update",
+      {
+        method: "POST",
+        headers: {
+          "x-api-key": "11d8c75fad83799f24bc7d8fd42789ce9b65d8d51bf82cc1845b11c94fb3fab0",
+        },
+        body: JSON.stringify(data),
+      }
+    ),
   getLeaveAttachment: (id: string) =>
     request<{ data: string; name: string; type: string; size: number }>(
       `/leave-requests/${id}/attachment`

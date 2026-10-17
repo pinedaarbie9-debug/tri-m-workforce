@@ -53,7 +53,6 @@ function NewLeaveRequestModal({ onClose, onCreated }: { onClose: () => void; onC
   useEffect(() => {
     api.getEmployees()
       .then((data) => {
-        // Active employees lang. Ang eligibility bawat leave type ay sinusuri ng backend.
         const eligible = data.filter((e: any) => e.status === "active");
         setEmployees(eligible);
       })
@@ -246,20 +245,53 @@ export function LeaveManagementPage() {
     }
   }, []);
 
-  // 🔒 Approve — WALANG password
-  async function handleApprove(id: string) {
+  // 🔒 Approve — MAY WEBHOOK NA PABALIK SA HR1
+  async function handleApprove(leave: LeaveRequest) {
     try {
-      await api.updateLeaveStatus(id, "approved");
+      // 1. Update sa HR2 DB (local)
+      await api.updateLeaveStatus(leave.id, "approved");
+      
+      // 2. Send pabalik kay HR1 via webhook (kung may reference_id)
+      if ((leave as any).reference_id) {
+        try {
+          await api.updateLeaveStatusWebhook({
+            reference_id: (leave as any).reference_id,
+            status: "approved",
+            rejection_reason: null
+          });
+          console.log("✅ HR1 notified of approval.");
+        } catch (err) {
+          console.error("❌ Failed to notify HR1:", err);
+          // Hindi natin i-block ang UI kung mag-fail ang webhook
+        }
+      }
+      
       fetchLeaves(false);
     } catch (err) {
       console.error("Failed to approve leave:", err);
     }
   }
 
-  // 🔒 Reject — WALANG password
-  async function handleReject(id: string) {
+  // 🔒 Reject — MAY WEBHOOK NA PABALIK SA HR1
+  async function handleReject(leave: LeaveRequest) {
     try {
-      await api.updateLeaveStatus(id, "rejected");
+      // 1. Update sa HR2 DB (local)
+      await api.updateLeaveStatus(leave.id, "rejected");
+      
+      // 2. Send pabalik kay HR1 via webhook (kung may reference_id)
+      if ((leave as any).reference_id) {
+        try {
+          await api.updateLeaveStatusWebhook({
+            reference_id: (leave as any).reference_id,
+            status: "rejected",
+            rejection_reason: "Rejected by HR2" // Pwede mong palitan ng modal para sa reason
+          });
+          console.log("✅ HR1 notified of rejection.");
+        } catch (err) {
+          console.error("❌ Failed to notify HR1:", err);
+        }
+      }
+      
       fetchLeaves(false);
     } catch (err) {
       console.error("Failed to reject leave:", err);
@@ -442,10 +474,10 @@ export function LeaveManagementPage() {
                       <td className="px-4 sm:px-5 py-4">
                         {leave.status === "pending" && (
                           <div className="flex items-center gap-1">
-                            <button onClick={() => handleApprove(leave.id)} className="w-6 h-6 rounded-full bg-emerald-100 flex items-center justify-center hover:bg-emerald-200 transition-colors" title="Approve">
+                            <button onClick={() => handleApprove(leave)} className="w-6 h-6 rounded-full bg-emerald-100 flex items-center justify-center hover:bg-emerald-200 transition-colors" title="Approve">
                               <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
                             </button>
-                            <button onClick={() => handleReject(leave.id)} className="w-6 h-6 rounded-full bg-red-100 flex items-center justify-center hover:bg-red-200 transition-colors" title="Reject">
+                            <button onClick={() => handleReject(leave)} className="w-6 h-6 rounded-full bg-red-100 flex items-center justify-center hover:bg-red-200 transition-colors" title="Reject">
                               <XCircle className="w-3.5 h-3.5 text-red-600" />
                             </button>
                           </div>
