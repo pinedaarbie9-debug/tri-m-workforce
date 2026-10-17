@@ -7,6 +7,7 @@ import { safeParseJSON, parseSettingValue, getZodError } from "../utils/helpers.
 import { logAudit } from "../utils/auditlog.js";
 import { safeError, validationError } from "../utils/errorResponse.js";
 import { ROLE_GROUPS } from "../utils/roles.js";
+import { syncEmployeesFromHR1 } from "../services/hr1Sync.js";
 import {
   createEmployeeSchema,
   updateEmployeeSchema,
@@ -54,6 +55,23 @@ router.patch("/me", async (req, res) => {
     return res.json({ ok: true });
   } catch (err) {
     return safeError(res, err, "Failed to update profile.");
+  }
+});
+
+// ===== Sync from HR1 =====
+router.post("/sync-from-hr1", requireRole(...ROLE_GROUPS.ADMIN_AND_HR), async (req, res) => {
+  try {
+    const result = await syncEmployeesFromHR1();
+    if (result.success) {
+      return res.json({
+        message: `Successfully synced ${result.count} employees from HR1.`,
+        errors: result.errors,
+      });
+    } else {
+      return res.status(500).json({ error: result.error });
+    }
+  } catch (err) {
+    return safeError(res, err, "Failed to sync employees from HR1.");
   }
 });
 
