@@ -1,8 +1,9 @@
 // src/app/pages/Employees.tsx
+// UPDATE-ONLY: walang Add Employee at Delete — galing sa integration ang mga empleyado.
 import { useState, useEffect, useCallback } from "react";
 import {
-  Search, Plus, Download, MoreHorizontal, Edit2, Trash2, Eye, Mail,
-  ChevronLeft, ChevronRight, UserCheck, UserX, Loader2, RefreshCw, RotateCw,
+  Search, Download, MoreHorizontal, Edit2, Eye, Mail,
+  ChevronLeft, ChevronRight, UserCheck, UserX, Loader2, RefreshCw,
 } from "lucide-react";
 import { motion } from "motion/react";
 import {
@@ -30,21 +31,6 @@ const typeBadge: Record<EmploymentType, string> = {
 function getDeptName(emp: Employee): string {
   if (emp.department?.name) return emp.department.name;
   return emp.department_id ?? "—";
-}
-
-function generateEmployeeCode(employees: Employee[]): string {
-  const prefix = "EMP-";
-  let maxNum = 0;
-  for (const emp of employees) {
-    const code = emp.employee_code ?? "";
-    if (code.startsWith(prefix)) {
-      const numStr = code.slice(prefix.length).replace(/\D/g, "");
-      const num = parseInt(numStr, 10);
-      if (!isNaN(num) && num > maxNum) maxNum = num;
-    }
-  }
-  const next = String(maxNum + 1).padStart(3, "0");
-  return `${prefix}${next}`;
 }
 
 const POLL_MS = 20000;
@@ -75,12 +61,6 @@ export function EmployeesPage() {
   const [selected, setSelected] = useState<Employee | null>(null);
   const [page, setPage] = useState(1);
   const perPage = 6;
-
-  const [showAddModal, setShowAddModal] = useState(false);
-  const [form, setForm] = useState(emptyForm);
-  const [saving, setSaving] = useState(false);
-  const [formError, setFormError] = useState<string | null>(null);
-  const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
 
   const [showEditModal, setShowEditModal] = useState(false);
   const [editingEmployee, setEditingEmployee] = useState<Employee | null>(null);
@@ -147,23 +127,9 @@ export function EmployeesPage() {
     setShowPasswordPrompt(true);
   }
 
-  function openAddModal() {
-    setForm({ ...emptyForm, employee_code: generateEmployeeCode(employees) });
-    setFormError(null);
-    setFieldErrors({});
-    setShowAddModal(true);
-  }
-
-  function regenerateEmployeeCode() {
-    setForm((f) => ({ ...f, employee_code: generateEmployeeCode(employees) }));
-  }
-
-  function validateEmployeeForm(data: typeof emptyForm, isEdit = false): FieldErrors {
+  function validateEmployeeForm(data: typeof emptyForm): FieldErrors {
     const errors: FieldErrors = {};
 
-    if (!isEdit && !data.employee_code.trim()) {
-      errors.employee_code = "Employee ID is required.";
-    }
     if (!data.first_name.trim()) {
       errors.first_name = "First name is required.";
     }
@@ -180,41 +146,6 @@ export function EmployeesPage() {
     }
 
     return errors;
-  }
-
-  async function handleAddEmployee(e: React.FormEvent) {
-    e.preventDefault();
-    setFormError(null);
-
-    const errors = validateEmployeeForm(form);
-    setFieldErrors(errors);
-
-    if (Object.keys(errors).length > 0) {
-      setFormError("Please fill in all required fields.");
-      return;
-    }
-
-    setSaving(true);
-    try {
-      await api.createEmployee({
-        ...form,
-        first_name: form.first_name.trim(),
-        last_name: form.last_name.trim(),
-        email: form.email.trim().toLowerCase(),
-        phone: form.phone.trim() || null,
-        job_title: form.job_title.trim() || null,
-        department_id: form.department_id || null,
-        hire_date: form.hire_date,
-      });
-      setShowAddModal(false);
-      setForm(emptyForm);
-      setFieldErrors({});
-      fetchEmployees();
-    } catch (err: any) {
-      setFormError(err.message ?? "Failed to add employee.");
-    } finally {
-      setSaving(false);
-    }
   }
 
   function openEditModal(emp: Employee) {
@@ -248,7 +179,7 @@ export function EmployeesPage() {
 
     if (!editingEmployee) return;
 
-    const errors = validateEmployeeForm(editForm, true);
+    const errors = validateEmployeeForm(editForm);
     setEditFieldErrors(errors);
 
     if (Object.keys(errors).length > 0) {
@@ -325,9 +256,6 @@ export function EmployeesPage() {
           <button onClick={() => fetchEmployees()} className="flex items-center justify-center gap-2 px-3 sm:px-4 py-2.5 text-sm border border-border rounded-xl bg-card hover:bg-muted/50 transition-colors">
             <RefreshCw className="w-4 h-4" /> <span className="hidden sm:inline">Refresh</span>
           </button>
-          <button onClick={openAddModal} className="col-span-2 sm:col-span-1 flex items-center justify-center gap-2 px-4 py-2.5 text-sm bg-primary text-white rounded-xl hover:bg-primary/90 transition-colors">
-            <Plus className="w-4 h-4" /> Add Employee
-          </button>
         </div>
       </div>
 
@@ -399,12 +327,6 @@ export function EmployeesPage() {
                           <DropdownMenuItem onClick={() => setSelected(emp)}><Eye className="w-3.5 h-3.5 mr-2" /> View Profile</DropdownMenuItem>
                           <DropdownMenuItem onClick={() => openEditModal(emp)}><Edit2 className="w-3.5 h-3.5 mr-2" /> Edit</DropdownMenuItem>
                           <DropdownMenuItem onClick={() => handleSendEmail(emp)}><Mail className="w-3.5 h-3.5 mr-2" /> Send Email</DropdownMenuItem>
-                          <DropdownMenuItem
-                            className="text-destructive focus:text-destructive"
-                            onClick={async () => { await api.deleteEmployee(emp.id); fetchEmployees(); }}
-                          >
-                            <Trash2 className="w-3.5 h-3.5 mr-2" /> Delete
-                          </DropdownMenuItem>
                         </DropdownMenuContent>
                       </DropdownMenu>
                     </td>
@@ -461,126 +383,6 @@ export function EmployeesPage() {
         </DialogContent>
       </Dialog>
 
-      {/* Add Employee */}
-      <Dialog open={showAddModal} onOpenChange={setShowAddModal}>
-        <DialogContent className="sm:max-w-md max-h-[85vh] overflow-y-auto">
-          <DialogHeader><DialogTitle>Add Employee</DialogTitle></DialogHeader>
-          <form onSubmit={handleAddEmployee} className="space-y-4">
-            {formError && <div className="p-2.5 bg-destructive/10 border border-destructive/20 rounded-lg text-sm text-destructive">{formError}</div>}
-
-            <div className="space-y-1.5">
-              <label className="text-sm font-medium text-foreground">Employee ID</label>
-              <div className="flex items-center gap-2">
-                <input value={form.employee_code} readOnly
-                  className="w-full px-3.5 py-2.5 rounded-lg border border-border bg-muted/40 text-sm text-muted-foreground font-mono cursor-not-allowed" />
-                <button type="button" onClick={regenerateEmployeeCode} title="Regenerate ID"
-                  className="shrink-0 w-9 h-9 rounded-lg border border-border flex items-center justify-center hover:bg-muted/50 transition-colors">
-                  <RotateCw className="w-4 h-4 text-muted-foreground" />
-                </button>
-              </div>
-              <p className="text-xs text-muted-foreground">Auto-generated — no need to type.</p>
-            </div>
-
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1.5">
-                <label className="text-sm font-medium text-foreground">First Name <span className="text-destructive">*</span></label>
-                <input value={form.first_name} onChange={(e) => {
-                  setForm({ ...form, first_name: e.target.value });
-                  if (fieldErrors.first_name) setFieldErrors((prev) => ({ ...prev, first_name: "" }));
-                }}
-                  className={`w-full px-3.5 py-2.5 rounded-lg border bg-input-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 ${fieldErrors.first_name ? "border-destructive" : "border-border"}`}
-                  placeholder="Juan" />
-                {fieldErrors.first_name && <p className="text-xs text-destructive">{fieldErrors.first_name}</p>}
-              </div>
-              <div className="space-y-1.5">
-                <label className="text-sm font-medium text-foreground">Last Name <span className="text-destructive">*</span></label>
-                <input value={form.last_name} onChange={(e) => {
-                  setForm({ ...form, last_name: e.target.value });
-                  if (fieldErrors.last_name) setFieldErrors((prev) => ({ ...prev, last_name: "" }));
-                }}
-                  className={`w-full px-3.5 py-2.5 rounded-lg border bg-input-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 ${fieldErrors.last_name ? "border-destructive" : "border-border"}`}
-                  placeholder="Dela Cruz" />
-                {fieldErrors.last_name && <p className="text-xs text-destructive">{fieldErrors.last_name}</p>}
-              </div>
-            </div>
-
-            <div className="space-y-1.5">
-              <label className="text-sm font-medium text-foreground">Email <span className="text-destructive">*</span></label>
-              <input type="email" value={form.email} onChange={(e) => {
-                setForm({ ...form, email: e.target.value });
-                if (fieldErrors.email) setFieldErrors((prev) => ({ ...prev, email: "" }));
-              }}
-                className={`w-full px-3.5 py-2.5 rounded-lg border bg-input-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 ${fieldErrors.email ? "border-destructive" : "border-border"}`}
-                placeholder="juan@company.com" />
-              {fieldErrors.email && <p className="text-xs text-destructive">{fieldErrors.email}</p>}
-            </div>
-
-            <div className="space-y-1.5">
-              <label className="text-sm font-medium text-foreground">Phone (optional)</label>
-              <input value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })}
-                className="w-full px-3.5 py-2.5 rounded-lg border border-border bg-input-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/20" placeholder="09xxxxxxxxx" />
-            </div>
-
-            <div className="space-y-1.5">
-              <label className="text-sm font-medium text-foreground">Job Title</label>
-              <input value={form.job_title} onChange={(e) => setForm({ ...form, job_title: e.target.value })}
-                className="w-full px-3.5 py-2.5 rounded-lg border border-border bg-input-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/20" placeholder="e.g. Software Engineer" />
-            </div>
-
-            <div className="space-y-1.5">
-              <label className="text-sm font-medium text-foreground">Department (optional)</label>
-              <select value={form.department_id} onChange={(e) => setForm({ ...form, department_id: e.target.value })}
-                className="w-full px-3.5 py-2.5 rounded-lg border border-border bg-input-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/20">
-                <option value="">None</option>
-                {departments.map((d) => (
-                  <option key={d.id} value={d.id}>{d.name}</option>
-                ))}
-              </select>
-            </div>
-
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1.5">
-                <label className="text-sm font-medium text-foreground">Employment Type</label>
-                <select value={form.employment_type} onChange={(e) => setForm({ ...form, employment_type: e.target.value as EmploymentType })}
-                  className="w-full px-3.5 py-2.5 rounded-lg border border-border bg-input-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/20">
-                  <option value="regular">Regular (Full-Time)</option>
-                  <option value="part_time">Part-Time</option>
-                  <option value="contract">Contractual</option>
-                  <option value="probationary">Probationary</option>
-                </select>
-              </div>
-              <div className="space-y-1.5">
-                <label className="text-sm font-medium text-foreground">Status</label>
-                <select value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value as EmployeeStatus })}
-                  className="w-full px-3.5 py-2.5 rounded-lg border border-border bg-input-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/20">
-                  <option value="active">Active</option>
-                  <option value="on_leave">On Leave</option>
-                  <option value="inactive">Inactive</option>
-                  <option value="terminated">Terminated</option>
-                </select>
-              </div>
-            </div>
-
-            <div className="space-y-1.5">
-              <label className="text-sm font-medium text-foreground">Hire Date <span className="text-destructive">*</span></label>
-              <input type="date" value={form.hire_date} onChange={(e) => {
-                setForm({ ...form, hire_date: e.target.value });
-                if (fieldErrors.hire_date) setFieldErrors((prev) => ({ ...prev, hire_date: "" }));
-              }}
-                className={`w-full px-3.5 py-2.5 rounded-lg border bg-input-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 ${fieldErrors.hire_date ? "border-destructive" : "border-border"}`} />
-              {fieldErrors.hire_date && <p className="text-xs text-destructive">{fieldErrors.hire_date}</p>}
-            </div>
-
-            <div className="flex justify-end gap-2 pt-2">
-              <button type="button" onClick={() => setShowAddModal(false)} className="px-4 py-2 text-sm rounded-lg border border-border hover:bg-muted/50 transition-colors">Cancel</button>
-              <button type="submit" disabled={saving} className="px-4 py-2 text-sm bg-primary text-white rounded-lg hover:bg-primary/90 disabled:opacity-60 transition-colors">
-                {saving ? "Saving..." : "Add Employee"}
-              </button>
-            </div>
-          </form>
-        </DialogContent>
-      </Dialog>
-
       {/* Edit Employee */}
       <Dialog open={showEditModal} onOpenChange={(open) => { if (!open) closeEditModal(); }}>
         <DialogContent className="sm:max-w-md max-h-[85vh] overflow-y-auto">
@@ -592,7 +394,7 @@ export function EmployeesPage() {
               <label className="text-sm font-medium text-foreground">Employee ID</label>
               <input value={editForm.employee_code} readOnly
                 className="w-full px-3.5 py-2.5 rounded-lg border border-border bg-muted/40 text-sm text-muted-foreground font-mono cursor-not-allowed" />
-              <p className="text-xs text-muted-foreground">Employee ID cannot be changed after creation.</p>
+              <p className="text-xs text-muted-foreground">Employee ID cannot be changed.</p>
             </div>
 
             <div className="grid grid-cols-2 gap-3">

@@ -3,11 +3,13 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import {
   Fingerprint, Eye, Plus, Shield,
   ShieldCheck, ShieldAlert, CheckCircle2, Loader2, Camera, RotateCcw, X,
-  Pencil, Trash2, RefreshCw, Eraser, Copy, Check, MonitorSmartphone,
+  Pencil, Trash2, Eraser, Copy, Check, MonitorSmartphone,
 } from "lucide-react";
 import { motion } from "motion/react";
 import * as faceapi from "face-api.js";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../components/ui/dialog";
+import LiveFingerprintEnroll from "../components/LiveFingerprintEnroll";
+import MaskedPin from "../components/Maskedpin";
 import { api } from "../../lib/api";
 import type { BiometricCredential } from "../../types";
 
@@ -22,7 +24,6 @@ const deviceColors: Record<string, string> = {
   face_id: "text-blue-600 bg-blue-50",
 };
 
-const AUTO_PIN_TYPES = ["fingerprint"];
 const PIN_BASED_TYPES = ["fingerprint"];
 
 const POLL_MS = 20000;
@@ -60,8 +61,8 @@ export function BiometricPage() {
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
 
-  const [generatingPin, setGeneratingPin] = useState(false);
-  const [pinError, setPinError] = useState<string | null>(null);
+  // LIVE fingerprint enrollment (ZK9500 scanner): true = ipinapakita ang live scanner view
+  const [liveEnrolling, setLiveEnrolling] = useState(false);
   const [pinCopied, setPinCopied] = useState(false);
 
   const [deletingId, setDeletingId] = useState<string | null>(null);
@@ -179,19 +180,6 @@ export function BiometricPage() {
     startCamera();
   }
 
-  async function requestNewPin() {
-    setGeneratingPin(true);
-    setPinError(null);
-    try {
-      const { credential_id } = await api.generateDevicePin();
-      setForm((f) => ({ ...f, credential_id }));
-    } catch (err: any) {
-      setPinError(err.message ?? "Failed to generate Device PIN. Please try again.");
-    } finally {
-      setGeneratingPin(false);
-    }
-  }
-
   async function copyPin() {
     if (!form.credential_id) return;
     try {
@@ -199,7 +187,7 @@ export function BiometricPage() {
       setPinCopied(true);
       setTimeout(() => setPinCopied(false), 1500);
     } catch {
-      // Clipboard access denied — silently ignore, PIN is still visible on screen.
+      // Clipboard access denied — silently ignore.
     }
   }
 
@@ -207,11 +195,11 @@ export function BiometricPage() {
     setEditingCredential(null);
     setForm(emptyForm);
     setFormError(null);
-    setPinError(null);
     setPinCopied(false);
     setPhotoData(null);
     setFaceDescriptor(null);
     setCameraError(null);
+    setLiveEnrolling(false);
     setShowEnrollModal(true);
   }
 
@@ -224,16 +212,17 @@ export function BiometricPage() {
       credential_id: cred.credential_id ?? "",
     });
     setFormError(null);
-    setPinError(null);
     setPinCopied(false);
     setPhotoData(cred.photo_data ?? null);
     setFaceDescriptor(null);
     setCameraError(null);
+    setLiveEnrolling(false);
     setShowEnrollModal(true);
   }
 
   function closeEnrollModal() {
     stopCamera();
+    setLiveEnrolling(false); // ma-uunmount ang LiveFingerprintEnroll at awtomatikong ika-cancel ang aktibong session
     setShowEnrollModal(false);
     setEditingCredential(null);
   }
@@ -248,22 +237,26 @@ export function BiometricPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showEnrollModal, form.device_type, photoData]);
 
-  useEffect(() => {
-    if (
-      showEnrollModal &&
-      !editingCredential &&
-      form.device_type === "fingerprint" &&
-      !form.credential_id &&
-      !generatingPin
-    ) {
-      requestNewPin();
+  // Simulan ang LIVE fingerprint enrollment (ang backend ang gagawa ng PIN at credential row)
+  function startLiveEnroll() {
+    setFormError(null);
+    if (!form.employee_id) {
+      setFormError("Please select an employee.");
+      return;
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [showEnrollModal, editingCredential, form.device_type]);
+    setLiveEnrolling(true);
+  }
 
   async function handleEnroll(e: React.FormEvent) {
     e.preventDefault();
     setFormError(null);
+
+    // Bagong fingerprint = live scanner flow, hindi dumadaan dito.
+    if (form.device_type === "fingerprint" && !editingCredential) {
+      startLiveEnroll();
+      return;
+    }
+
     if (!form.employee_id) {
       setFormError("Please select an employee.");
       return;
@@ -274,10 +267,6 @@ export function BiometricPage() {
     }
     if (form.device_type === "face_id" && !editingCredential && !faceDescriptor) {
       setFormError("No face was detected in the photo. Please try capturing again.");
-      return;
-    }
-    if (form.device_type === "fingerprint" && !editingCredential && !form.credential_id) {
-      setFormError("Device PIN has not been generated yet. Click 'Regenerate' or try again.");
       return;
     }
 
@@ -347,11 +336,17 @@ export function BiometricPage() {
   const getEmpCode = (c: any) => c.employee?.employee_code ?? "—";
 
   const isFingerprint = form.device_type === "fingerprint";
-  // Once a fingerprint credential already exists, its PIN must never change —
-  // the physical template captured on the desktop scanner app is keyed to the
-  // ORIGINAL PIN (see fidToCredentialId mapping in the C# bridge). Changing it
-  // here would orphan that template and the employee would stop matching.
+  const isNewFingerprint = isFingerprint && !editingCredential;
+  // Kapag may fingerprint credential na, hindi na puwedeng palitan ang PIN —
+  // naka-link ang naka-capture na template sa ORIGINAL PIN.
   const pinLocked = isFingerprint && !!editingCredential;
+
+  // Mga empleyadong may aktibong credential na ng napiling device type (hindi na puwedeng i-enroll ulit)
+  const enrolledIds = new Set(
+    (credentials as any[])
+      .filter((c) => c.is_active && c.device_type === form.device_type)
+      .map((c) => c.employee_id)
+  );
 
   return (
     <div className="p-4 sm:p-6 space-y-4 sm:space-y-6">
@@ -509,15 +504,18 @@ export function BiometricPage() {
                           <div className="min-w-0"><p className="text-muted-foreground">Device</p><p className="font-medium text-foreground truncate">{cred.device_name ?? "—"}</p></div>
                           <div className="min-w-0"><p className="text-muted-foreground">Type</p><p className="font-medium text-foreground capitalize truncate">{cred.device_type.replace("_", " ")}</p></div>
                           {PIN_BASED_TYPES.includes(cred.device_type) && (
-                            <div className="min-w-0"><p className="text-muted-foreground">Device PIN</p><p className="font-medium text-foreground font-mono truncate">{cred.credential_id || "—"}</p></div>
+                            <div className="min-w-0">
+                              <p className="text-muted-foreground">Device PIN</p>
+                              <MaskedPin value={cred.credential_id} className="font-medium text-foreground" />
+                            </div>
                           )}
                           <div className="min-w-0"><p className="text-muted-foreground">Registered</p><p className="font-medium text-foreground truncate">{cred.registered_at?.slice(0, 10)}</p></div>
                           <div className="min-w-0"><p className="text-muted-foreground">Last Used</p><p className="font-medium text-foreground truncate">{cred.last_used_at ?? "Never"}</p></div>
                         </div>
                         {PIN_BASED_TYPES.includes(cred.device_type) && !cred.last_used_at && (
-                          <div className="mt-2.5 flex items-center gap-1.5 text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5">
+                          <div className="mt-2.5 flex items-center gap-1.5 text-[11px] text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg px-2.5 py-1.5">
                             <MonitorSmartphone className="w-3.5 h-3.5 shrink-0" />
-                            Awaiting fingerprint scan on the desktop enrollment app.
+                            Enrolled — waiting for the first punch on the scanner.
                           </div>
                         )}
                       </motion.div>
@@ -579,165 +577,181 @@ export function BiometricPage() {
       )}
 
       <Dialog open={showEnrollModal} onOpenChange={(open) => { if (!open) closeEnrollModal(); }}>
-        <DialogContent className="sm:max-w-md max-h-[85vh] overflow-y-auto">
-          <DialogHeader><DialogTitle>{editingCredential ? "Edit Credential" : "Enroll Device"}</DialogTitle></DialogHeader>
-          <form onSubmit={handleEnroll} className="space-y-4">
-            {formError && <div className="p-2.5 bg-destructive/10 border border-destructive/20 rounded-lg text-sm text-destructive">{formError}</div>}
+        <DialogContent className="sm:max-w-md max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>
+              {liveEnrolling ? "Enroll Fingerprint" : editingCredential ? "Edit Credential" : "Enroll Device"}
+            </DialogTitle>
+          </DialogHeader>
 
-            <div className="space-y-1.5">
-              <label className="text-sm font-medium text-foreground">Employee</label>
-              <select value={form.employee_id} onChange={(e) => setForm({ ...form, employee_id: e.target.value })} disabled={!!editingCredential}
-                className="w-full px-3.5 py-2.5 rounded-lg border border-border bg-input-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 disabled:opacity-60">
-                <option value="">Select employee</option>
-                {employees.map((emp) => (
-                  <option key={emp.id} value={emp.id}>{emp.full_name}</option>
-                ))}
-              </select>
-              {editingCredential && (
-                <p className="text-xs text-muted-foreground">Employee cannot be changed. Delete and re-enroll if needed.</p>
-              )}
-            </div>
+          {/* ================= LIVE SCANNER VIEW ================= */}
+          {liveEnrolling ? (
+            <LiveFingerprintEnroll
+              employeeId={form.employee_id}
+              deviceName={form.device_name || "Fingerprint Scanner"}
+              onSuccess={() => fetchAll(false)}
+              onClose={closeEnrollModal}
+            />
+          ) : (
+            <form onSubmit={handleEnroll} className="space-y-4">
+              {formError && <div className="p-2.5 bg-destructive/10 border border-destructive/20 rounded-lg text-sm text-destructive">{formError}</div>}
 
-            <div className="space-y-1.5">
-              <label className="text-sm font-medium text-foreground">Device Type</label>
-              <select value={form.device_type}
-                onChange={(e) => {
-                  setPhotoData(null);
-                  setFaceDescriptor(null);
-                  setPinError(null);
-                  setForm({ ...form, device_type: e.target.value, credential_id: "" });
-                }}
-                disabled={!!editingCredential}
-                className="w-full px-3.5 py-2.5 rounded-lg border border-border bg-input-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 disabled:opacity-60">
-                <option value="face_id">Face ID (Camera)</option>
-                <option value="fingerprint">Fingerprint</option>
-              </select>
-              {editingCredential && (
-                <p className="text-xs text-muted-foreground">Device type cannot be changed. Delete and re-enroll if needed.</p>
-              )}
-            </div>
-
-            <div className="space-y-1.5">
-              <label className="text-sm font-medium text-foreground">Device Name (optional)</label>
-              <input value={form.device_name} onChange={(e) => setForm({ ...form, device_name: e.target.value })}
-                className="w-full px-3.5 py-2.5 rounded-lg border border-border bg-input-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/20"
-                placeholder={form.device_type === "face_id" ? "e.g. Front Desk Camera" : "e.g. Front Desk Scanner"} />
-            </div>
-
-            {AUTO_PIN_TYPES.includes(form.device_type) && (
               <div className="space-y-1.5">
-                <label className="text-sm font-medium text-foreground">Device PIN (auto-generated)</label>
-                {pinError && <p className="text-xs text-destructive">{pinError}</p>}
-                <div className="flex items-center gap-2">
-                  <input value={generatingPin ? "Generating PIN..." : form.credential_id || "—"} readOnly
-                    className="flex-1 px-3.5 py-2.5 rounded-lg border border-border bg-muted text-sm font-mono text-muted-foreground cursor-not-allowed tracking-widest" />
-                  <button type="button" onClick={copyPin} disabled={!form.credential_id} title="Copy PIN"
-                    className="w-10 h-10 shrink-0 rounded-lg border border-border flex items-center justify-center hover:bg-muted/50 transition-colors disabled:opacity-50">
-                    {pinCopied ? <Check className="w-4 h-4 text-emerald-600" /> : <Copy className="w-4 h-4" />}
-                  </button>
-                  {!pinLocked && (
-                    <button type="button" onClick={requestNewPin} disabled={generatingPin} title="Generate new PIN"
+                <label className="text-sm font-medium text-foreground">Employee</label>
+                <select value={form.employee_id} onChange={(e) => setForm({ ...form, employee_id: e.target.value })} disabled={!!editingCredential}
+                  className="w-full px-3.5 py-2.5 rounded-lg border border-border bg-input-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 disabled:opacity-60">
+                  <option value="">Select employee</option>
+                  {employees.map((emp) => {
+                    const already = !editingCredential && enrolledIds.has(emp.id);
+                    return (
+                      <option key={emp.id} value={emp.id} disabled={already}>
+                        {emp.full_name}{already ? " (already enrolled)" : ""}
+                      </option>
+                    );
+                  })}
+                </select>
+                {editingCredential && (
+                  <p className="text-xs text-muted-foreground">Employee cannot be changed. Delete and re-enroll if needed.</p>
+                )}
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-sm font-medium text-foreground">Device Type</label>
+                <select value={form.device_type}
+                  onChange={(e) => {
+                    setPhotoData(null);
+                    setFaceDescriptor(null);
+                    setFormError(null);
+                    setForm({ ...form, employee_id: "", device_type: e.target.value, credential_id: "" });
+                  }}
+                  disabled={!!editingCredential}
+                  className="w-full px-3.5 py-2.5 rounded-lg border border-border bg-input-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 disabled:opacity-60">
+                  <option value="face_id">Face ID (Camera)</option>
+                  <option value="fingerprint">Fingerprint</option>
+                </select>
+                {editingCredential && (
+                  <p className="text-xs text-muted-foreground">Device type cannot be changed. Delete and re-enroll if needed.</p>
+                )}
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-sm font-medium text-foreground">Device Name (optional)</label>
+                <input value={form.device_name} onChange={(e) => setForm({ ...form, device_name: e.target.value })}
+                  className="w-full px-3.5 py-2.5 rounded-lg border border-border bg-input-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/20"
+                  placeholder={form.device_type === "face_id" ? "e.g. Front Desk Camera" : "e.g. Front Desk Scanner"} />
+              </div>
+
+              {/* Edit ng fingerprint: naka-lock at naka-mask (asterisk) ang PIN */}
+              {pinLocked && (
+                <div className="space-y-1.5">
+                  <label className="text-sm font-medium text-foreground">Device PIN</label>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="password"
+                      value={form.credential_id}
+                      placeholder="—"
+                      readOnly
+                      autoComplete="off"
+                      className="flex-1 px-3.5 py-2.5 rounded-lg border border-border bg-muted text-sm font-mono text-muted-foreground cursor-not-allowed tracking-widest" />
+                    <button type="button" onClick={copyPin} disabled={!form.credential_id} title="Copy PIN"
                       className="w-10 h-10 shrink-0 rounded-lg border border-border flex items-center justify-center hover:bg-muted/50 transition-colors disabled:opacity-50">
-                      {generatingPin ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
+                      {pinCopied ? <Check className="w-4 h-4 text-emerald-600" /> : <Copy className="w-4 h-4" />}
                     </button>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    This PIN is hidden for privacy and locked because it's already linked to a captured fingerprint on the scanner. Delete and re-enroll to issue a new one.
+                  </p>
+                </div>
+              )}
+
+              {/* Bagong fingerprint: live scan sa ZK9500 */}
+              {isNewFingerprint && (
+                <div className="rounded-xl border border-primary/20 bg-primary/5 p-3.5 space-y-2">
+                  <p className="text-xs font-semibold text-foreground flex items-center gap-1.5">
+                    <MonitorSmartphone className="w-3.5 h-3.5 text-primary" /> Live scan sa ZK9500 scanner
+                  </p>
+                  <ul className="text-xs text-muted-foreground space-y-1 list-disc list-inside">
+                    <li>Siguraduhing nakasaksak ang scanner at tumatakbo ang scanner program sa PC nito.</li>
+                    <li>I-click ang <span className="font-medium text-foreground">Start Fingerprint Scan</span>, tapos ilagay ang daliri sa scanner nang 3 beses.</li>
+                    <li>Awtomatikong gagawa ng PIN at ise-save ang fingerprint. Walang kailangang i-type sa scanner PC.</li>
+                  </ul>
+                </div>
+              )}
+
+              {form.device_type === "face_id" && (
+                <div className="space-y-2">
+                  <label className="text-sm font-medium text-foreground flex items-center gap-1.5">
+                    <Camera className="w-3.5 h-3.5" /> Capture Photo
+                  </label>
+                  {!modelsLoaded && !modelsError && (
+                    <p className="text-xs text-muted-foreground flex items-center gap-1.5">
+                      <Loader2 className="w-3 h-3 animate-spin" /> Loading face recognition models...
+                    </p>
+                  )}
+                  <div className="relative rounded-xl overflow-hidden bg-muted aspect-video flex items-center justify-center border border-border">
+                    {cameraError ? (
+                      <p className="text-xs text-destructive text-center px-4">{cameraError}</p>
+                    ) : photoData ? (
+                      <img src={photoData} alt="Captured" className="w-full h-full object-cover" />
+                    ) : (
+                      <video ref={videoRef} autoPlay playsInline muted className="w-full h-full object-cover" />
+                    )}
+                  </div>
+                  <canvas ref={canvasRef} className="hidden" />
+                  <div className="flex gap-2">
+                    {!photoData && !cameraError && (
+                      <button type="button" onClick={capturePhoto} disabled={detecting || !modelsLoaded}
+                        className="flex-1 flex items-center justify-center gap-2 px-3 py-2 text-sm bg-primary text-white rounded-lg hover:bg-primary/90 disabled:opacity-60 transition-colors">
+                        {detecting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Camera className="w-4 h-4" />}
+                        {detecting ? "Detecting face..." : "Capture"}
+                      </button>
+                    )}
+                    {photoData && (
+                      <button type="button" onClick={retakePhoto} className="flex-1 flex items-center justify-center gap-2 px-3 py-2 text-sm border border-border rounded-lg hover:bg-muted/50 transition-colors">
+                        <RotateCcw className="w-4 h-4" /> Retake
+                      </button>
+                    )}
+                    {cameraError && (
+                      <button type="button" onClick={startCamera} className="flex-1 flex items-center justify-center gap-2 px-3 py-2 text-sm border border-border rounded-lg hover:bg-muted/50 transition-colors">
+                        Try Again
+                      </button>
+                    )}
+                  </div>
+                  {faceDescriptor && (
+                    <p className="text-xs text-emerald-600 flex items-center gap-1.5">
+                      <CheckCircle2 className="w-3 h-3" /> Face detected, ready to save.
+                    </p>
+                  )}
+                  {editingCredential && !faceDescriptor && photoData && (
+                    <p className="text-xs text-muted-foreground">Keeping the old photo, or click "Retake" to capture a new one.</p>
                   )}
                 </div>
-                {pinLocked ? (
-                  <p className="text-xs text-muted-foreground">
-                    This PIN is locked because it's already linked to a captured fingerprint on the scanner. Delete and re-enroll to issue a new one.
-                  </p>
+              )}
+
+              <div className="flex flex-col sm:flex-row justify-end gap-2 pt-2">
+                <button type="button" onClick={closeEnrollModal} className="px-4 py-2 text-sm rounded-lg border border-border hover:bg-muted/50 transition-colors flex items-center justify-center gap-1.5">
+                  <X className="w-3.5 h-3.5" /> Cancel
+                </button>
+                {isNewFingerprint ? (
+                  <button
+                    type="button"
+                    onClick={startLiveEnroll}
+                    className="px-4 py-2 text-sm bg-primary text-white rounded-lg hover:bg-primary/90 transition-colors flex items-center justify-center gap-1.5"
+                  >
+                    <Fingerprint className="w-4 h-4" /> Start Fingerprint Scan
+                  </button>
                 ) : (
-                  <p className="text-xs text-muted-foreground">
-                    This is the PIN entered on the fingerprint hardware when a scan matches. Automatically generated — no duplicates.
-                  </p>
+                  <button
+                    type="submit"
+                    disabled={saving}
+                    className="px-4 py-2 text-sm bg-primary text-white rounded-lg hover:bg-primary/90 disabled:opacity-60 transition-colors"
+                  >
+                    {saving ? "Saving..." : editingCredential ? "Save Changes" : "Enroll Device"}
+                  </button>
                 )}
               </div>
-            )}
-
-            {isFingerprint && !editingCredential && (
-              <div className="rounded-xl border border-border bg-muted/30 p-3 space-y-2">
-                <p className="text-xs font-semibold text-foreground flex items-center gap-1.5">
-                  <MonitorSmartphone className="w-3.5 h-3.5" /> Next: finish enrollment sa scanner PC
-                </p>
-                <ol className="text-xs text-muted-foreground space-y-1.5 list-decimal list-inside">
-                  <li>I-save muna ang PIN na ito (o i-copy gamit ang button sa itaas).</li>
-                  <li>Sa scanner PC, buksan ang Biometric Enrollment app, i-click ang <span className="font-medium text-foreground">Initialize</span> pagkatapos <span className="font-medium text-foreground">Open</span>.</li>
-                  <li>Ilagay ang PIN sa Employee PIN field, tapos i-click ang <span className="font-medium text-foreground">Enroll</span>.</li>
-                  <li>Pindutin ang parehong daliri 3 beses hanggang lumabas ang "enroll succ".</li>
-                  <li>Awtomatikong ise-save ang fingerprint template sa backend — babalik dito ang status na "Active" pag na-detect na ang unang punch.</li>
-                </ol>
-              </div>
-            )}
-
-            {form.device_type === "face_id" && (
-              <div className="space-y-2">
-                <label className="text-sm font-medium text-foreground flex items-center gap-1.5">
-                  <Camera className="w-3.5 h-3.5" /> Capture Photo
-                </label>
-                {!modelsLoaded && !modelsError && (
-                  <p className="text-xs text-muted-foreground flex items-center gap-1.5">
-                    <Loader2 className="w-3 h-3 animate-spin" /> Loading face recognition models...
-                  </p>
-                )}
-                <div className="relative rounded-xl overflow-hidden bg-muted aspect-video flex items-center justify-center border border-border">
-                  {cameraError ? (
-                    <p className="text-xs text-destructive text-center px-4">{cameraError}</p>
-                  ) : photoData ? (
-                    <img src={photoData} alt="Captured" className="w-full h-full object-cover" />
-                  ) : (
-                    <video ref={videoRef} autoPlay playsInline muted className="w-full h-full object-cover" />
-                  )}
-                </div>
-                <canvas ref={canvasRef} className="hidden" />
-                <div className="flex gap-2">
-                  {!photoData && !cameraError && (
-                    <button type="button" onClick={capturePhoto} disabled={detecting || !modelsLoaded}
-                      className="flex-1 flex items-center justify-center gap-2 px-3 py-2 text-sm bg-primary text-white rounded-lg hover:bg-primary/90 disabled:opacity-60 transition-colors">
-                      {detecting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Camera className="w-4 h-4" />}
-                      {detecting ? "Detecting face..." : "Capture"}
-                    </button>
-                  )}
-                  {photoData && (
-                    <button type="button" onClick={retakePhoto} className="flex-1 flex items-center justify-center gap-2 px-3 py-2 text-sm border border-border rounded-lg hover:bg-muted/50 transition-colors">
-                      <RotateCcw className="w-4 h-4" /> Retake
-                    </button>
-                  )}
-                  {cameraError && (
-                    <button type="button" onClick={startCamera} className="flex-1 flex items-center justify-center gap-2 px-3 py-2 text-sm border border-border rounded-lg hover:bg-muted/50 transition-colors">
-                      Try Again
-                    </button>
-                  )}
-                </div>
-                {faceDescriptor && (
-                  <p className="text-xs text-emerald-600 flex items-center gap-1.5">
-                    <CheckCircle2 className="w-3 h-3" /> Face detected, ready to save.
-                  </p>
-                )}
-                {editingCredential && !faceDescriptor && photoData && (
-                  <p className="text-xs text-muted-foreground">Keeping the old photo, or click "Retake" to capture a new one.</p>
-                )}
-              </div>
-            )}
-
-            <div className="flex flex-col sm:flex-row justify-end gap-2 pt-2">
-              <button type="button" onClick={closeEnrollModal} className="px-4 py-2 text-sm rounded-lg border border-border hover:bg-muted/50 transition-colors flex items-center justify-center gap-1.5">
-                <X className="w-3.5 h-3.5" /> Cancel
-              </button>
-              <button
-                type="submit"
-                disabled={saving || (form.device_type === "fingerprint" && !editingCredential && generatingPin)}
-                className="px-4 py-2 text-sm bg-primary text-white rounded-lg hover:bg-primary/90 disabled:opacity-60 transition-colors"
-              >
-                {saving
-                  ? "Saving..."
-                  : editingCredential
-                  ? "Save Changes"
-                  : isFingerprint
-                  ? "Save PIN & Continue on Scanner"
-                  : "Enroll Device"}
-              </button>
-            </div>
-          </form>
+            </form>
+          )}
         </DialogContent>
       </Dialog>
     </div>

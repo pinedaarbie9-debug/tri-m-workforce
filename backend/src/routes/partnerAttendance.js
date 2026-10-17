@@ -121,17 +121,21 @@ router.post("/sync-data", async (req, res) => {
             throw new Error(`Employee code ${lv.employee_id} not found in local DB.`);
           }
 
-          // I-save ang leave
+          // Kunin ang reference_id kung meron (para may pang-balik tayo kay HR1)
+          const referenceId = lv.reference_id || lv.leave_id || lv.id || null;
+
+          // I-save ang leave (kasama ang reference_id)
           await q(
-            `INSERT INTO leave_requests (employee_id, leave_type, start_date, end_date, days_count, status)
-             VALUES (:employee_id, :leave_type, :start_date, :end_date, :days_count, :status)`,
+            `INSERT INTO leave_requests (employee_id, leave_type, start_date, end_date, days_count, status, reference_id)
+             VALUES (:employee_id, :leave_type, :start_date, :end_date, :days_count, :status, :reference_id)`,
             {
               employee_id: employee.id,
               leave_type: lv.leave_type,
               start_date: lv.start_date,
               end_date: lv.end_date,
               days_count: lv.days_count || 1,
-              status: lv.status
+              status: lv.status,
+              reference_id: referenceId
             }
           );
 
@@ -171,6 +175,60 @@ router.post("/sync-data", async (req, res) => {
   } catch (err) {
     console.error("❌ Fatal error during sync:", err);
     return safeError(res, err, "Failed to sync data from partner.");
+  }
+});
+
+// ============================================================
+// POST /api/partner/leave-status-update
+// (Ito yung tatawagin ng UI mo para mag-update ng status pabalik kay HR1)
+// ============================================================
+router.post("/leave-status-update", async (req, res) => {
+  try {
+    const { reference_id, status, rejection_reason } = req.body;
+
+    if (!reference_id || !status) {
+      return res.status(400).json({ error: "Missing reference_id or status." });
+    }
+
+    // 1. I-update ang local DB
+    await q(
+      "UPDATE leave_requests SET status = :status, rejection_reason = :rejection_reason, updated_at = NOW() WHERE reference_id = :reference_id",
+      { status, rejection_reason: rejection_reason || null, reference_id }
+    );
+
+    // 2. I-send pabalik kay HR1
+    const hr1WebhookUrl = "https://recruitment.mms-tmglt.com/api/v1/webhooks/hr2_leave_status.php";
+    
+    console.log(`⏳ Sending status update to HR1 for reference_id: ${reference_id}`);
+
+    const response = await fetch(hr1WebhookUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-API-Key": process.env.HR1_RECRUITMENT_API_KEY
+      },
+      body: JSON.stringify({
+        reference_id: reference_id,
+        status: status,
+        rejection_reason: rejection_reason || null
+      })
+    });
+
+    const responseData = await response.text();
+    console.log(`✅ HR1 Response: ${response.status} - ${responseData}`);
+
+    return res.json({
+      success: true,
+      message: "Leave status updated and sent to HR1.",
+      hr1_response: {
+        status: response.status,
+        body: responseData
+      }
+    });
+
+  } catch (err) {
+    console.error("❌ Error updating leave status:", err);
+    return safeError(res, err, "Failed to update leave status.");
   }
 });
 
