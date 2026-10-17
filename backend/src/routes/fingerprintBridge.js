@@ -2,6 +2,13 @@ import { Router } from "express";
 import { q } from "../db.js";
 import { resolveEmployeeIdFromPin, processPunch } from "./deviceattendance.js";
 import { nowManila } from "../utils/helpers.js";
+import {
+  touchBridge,
+  claimNextWaiting,
+  updateProgress,
+  completeSession,
+  failSession,
+} from "../utils/enrollSessions.js";
 const router = Router();
 
 // -----------------------------------------------------------------------
@@ -116,6 +123,62 @@ router.post("/punch", async (req, res) => {
     console.error("POST /fingerprint-bridge/punch error:", err);
     res.status(500).json({ error: err.sqlMessage ?? err.message ?? "Failed to process punch" });
   }
+});
+
+// =======================================================================
+// LIVE ENROLLMENT (bagong flow — hindi na kailangan ng manual PIN / save-template)
+// =======================================================================
+
+// GET /fingerprint-bridge/enroll/pending
+// Pina-poll ito ng C# app (~1x kada segundo). Ang pag-poll mismo ang
+// nagsasabi sa web na "online" ang scanner app.
+router.get("/enroll/pending", (req, res) => {
+  if (!isAuthorizedBridge(req)) return res.status(403).json({ error: "FORBIDDEN" });
+  touchBridge();
+  const s = claimNextWaiting();
+  if (!s) return res.json({ pending: false });
+  res.json({
+    pending: true,
+    session_id: s.id,
+    credential_id: s.credential_id,
+    employee_name: s.employee_name,
+  });
+});
+
+// POST /fingerprint-bridge/enroll/:id/progress   body: { step: 0..3, message }
+// 409 + { stop: true } = ihinto na ng C# app ang capture (na-cancel/na-expire).
+router.post("/enroll/:id/progress", (req, res) => {
+  if (!isAuthorizedBridge(req)) return res.status(403).json({ error: "FORBIDDEN" });
+  touchBridge();
+  const r = updateProgress(req.params.id, req.body?.step, req.body?.message);
+  if (!r.ok) return res.status(409).json({ error: r.reason, stop: true });
+  res.json({ success: true });
+});
+
+// POST /fingerprint-bridge/enroll/:id/complete   body: { fingerprint_template }
+router.post("/enroll/:id/complete", async (req, res) => {
+  if (!isAuthorizedBridge(req)) return res.status(403).json({ error: "FORBIDDEN" });
+  touchBridge();
+  try {
+    const { fingerprint_template } = req.body ?? {};
+    if (!fingerprint_template) {
+      return res.status(400).json({ error: "Kailangan ng fingerprint_template." });
+    }
+    const r = await completeSession(req.params.id, String(fingerprint_template));
+    if (!r.ok) return res.status(409).json({ error: r.error ?? r.reason, stop: true });
+    res.json({ success: true, credential_id: r.credential_id });
+  } catch (err) {
+    console.error("POST /fingerprint-bridge/enroll/:id/complete error:", err);
+    res.status(500).json({ error: err.sqlMessage ?? err.message ?? "Failed to complete enrollment" });
+  }
+});
+
+// POST /fingerprint-bridge/enroll/:id/fail   body: { message }
+router.post("/enroll/:id/fail", (req, res) => {
+  if (!isAuthorizedBridge(req)) return res.status(403).json({ error: "FORBIDDEN" });
+  touchBridge();
+  failSession(req.params.id, req.body?.message);
+  res.json({ success: true });
 });
 
 export default router;

@@ -209,6 +209,28 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 }
 
 // ============================================================
+// Fingerprint live enrollment types
+// ============================================================
+export interface FingerprintEnrollSession {
+  id: string;
+  status:
+    | "waiting"
+    | "capturing"
+    | "success"
+    | "failed"
+    | "expired"
+    | "cancelled";
+  step: number; // 0..3
+  message?: string;
+  bridge_online: boolean; // true kapag online ang ZK9500 bridge app
+  employee_id: string;
+  employee_name: string;
+  credential_id: string; // auto-generated Device PIN
+  total_steps?: number; // 3
+  credential_row_id?: string | null; // id ng bagong biometric_credentials row kapag success
+}
+
+// ============================================================
 // API Endpoints
 // ============================================================
 export const api = {
@@ -391,6 +413,24 @@ export const api = {
       }`,
       { method: "DELETE" }
     ),
+
+  // ---- Fingerprint live enrollment (ZK9500 bridge) ----
+  startFingerprintEnrollment: (employee_id: string, device_name?: string) =>
+    request<FingerprintEnrollSession>(
+      "/biometric-credentials/enroll-session",
+      {
+        method: "POST",
+        body: JSON.stringify({ employee_id, device_name }),
+      }
+    ),
+  getFingerprintEnrollment: (id: string) =>
+    request<FingerprintEnrollSession>(
+      `/biometric-credentials/enroll-session/${id}`
+    ),
+  cancelFingerprintEnrollment: (id: string) =>
+    request<{ success: true }>(`/biometric-credentials/enroll-session/${id}`, {
+      method: "DELETE",
+    }),
 
   // ---- Audit Logs ----
   getAuditLogs: () => request<any[]>("/audit-logs"),

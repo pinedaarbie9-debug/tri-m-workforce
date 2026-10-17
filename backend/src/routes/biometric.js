@@ -8,6 +8,14 @@ import { logAudit } from "../utils/auditlog.js";
 import { safeError, validationError } from "../utils/errorResponse.js";
 import { ROLE_GROUPS } from "../utils/roles.js";
 import { createBiometricSchema, updateBiometricSchema } from "../validators/businessValidator.js";
+import {
+  createSession,
+  getSession,
+  getActiveSession,
+  cancelSession,
+  publicSession,
+  isBridgeOnline,
+} from "../utils/enrollSessions.js";
 
 const router = Router();
 router.use(requireAuth);
@@ -219,6 +227,82 @@ router.post("/", requireRole(...ROLE_GROUPS.ADMIN_AND_HR), async (req, res) => {
   } catch (err) {
     return safeError(res, err, "Failed to enroll device.");
   }
+});
+
+// =======================================================================
+// LIVE FINGERPRINT ENROLLMENT
+// Web modal -> gumagawa ng session -> kukunin ng C# scanner app -> live
+// progress (3 scans) -> awtomatikong ise-save ang credential row.
+// =======================================================================
+const canAccessSession = (s, user) => s.created_by === user.id || user.role === "admin";
+
+router.get("/bridge-status", requireRole(...ROLE_GROUPS.MANAGEMENT), (req, res) => {
+  return res.json({ online: isBridgeOnline() });
+});
+
+router.post("/enroll-session", requireRole(...ROLE_GROUPS.ADMIN_AND_HR), async (req, res) => {
+  try {
+    const { employee_id, device_name } = req.body ?? {};
+    if (!employee_id) return validationError(res, "employee_id is required.");
+
+    const empRows = await q(
+      `SELECT id, COALESCE(NULLIF(full_name, ''), CONCAT(first_name, ' ', last_name)) AS full_name
+       FROM employees
+       WHERE id = :employee_id AND status = 'active' AND deleted_at IS NULL`,
+      { employee_id }
+    );
+    if (!empRows[0]) return res.status(404).json({ error: "Employee not found." });
+
+    const existing = await q(
+      `SELECT id FROM biometric_credentials
+       WHERE employee_id = :employee_id AND device_type = 'fingerprint' AND is_active = TRUE`,
+      { employee_id }
+    );
+    if (existing.length) {
+      return res.status(409).json({ error: "Employee already has an active fingerprint credential." });
+    }
+
+    // Isang scanner = isang enrollment sa isang pagkakataon.
+    const active = getActiveSession();
+    if (active) {
+      if (active.created_by !== req.user.id) {
+        return res.status(409).json({
+          error: "May ginagawang enrollment ang ibang user sa scanner. Hintayin muna itong matapos.",
+        });
+      }
+      cancelSession(active.id, "Napalitan ng bagong enrollment.");
+    }
+
+    const credential_id = await generateUniquePin();
+    const session = createSession({
+      employee_id,
+      employee_name: empRows[0].full_name,
+      credential_id,
+      device_name: typeof device_name === "string" ? device_name.trim().slice(0, 255) : null,
+      created_by: req.user.id,
+      ip: req.ip,
+    });
+
+    return res.status(201).json(publicSession(session));
+  } catch (err) {
+    if (err.message === "PIN_GENERATION_FAILED") {
+      return res.status(500).json({ error: "Could not generate unique PIN. Try again." });
+    }
+    return safeError(res, err, "Failed to start enrollment session.");
+  }
+});
+
+router.get("/enroll-session/:id", requireRole(...ROLE_GROUPS.ADMIN_AND_HR), (req, res) => {
+  const s = getSession(req.params.id);
+  if (!s || !canAccessSession(s, req.user)) return res.status(404).json({ error: "Session not found." });
+  return res.json(publicSession(s));
+});
+
+router.delete("/enroll-session/:id", requireRole(...ROLE_GROUPS.ADMIN_AND_HR), (req, res) => {
+  const s = getSession(req.params.id);
+  if (!s || !canAccessSession(s, req.user)) return res.status(404).json({ error: "Session not found." });
+  cancelSession(s.id);
+  return res.json({ success: true });
 });
 
 router.put("/:id", requireRole(...ROLE_GROUPS.ADMIN_AND_HR), async (req, res) => {

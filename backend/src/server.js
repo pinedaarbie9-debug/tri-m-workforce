@@ -2,6 +2,7 @@
 
 // Last updated: 2026-09-26 — FIX: idinagdag ang fingerprintBridge route (dati'y wala sa mounting list)
 // Last updated: 2026-09-26 — FIX: idinagdag ang request timeout safety net (para sa hang/ETIMEDOUT sa unhandled async errors) + startup DB ping
+// Last updated: 2026-10-17 — ADD: HR3 integration routes
 
 import express from "express";
 import cors from "cors";
@@ -57,6 +58,7 @@ import reportsRoutes from "./routes/reports.js";
 import deviceAttendanceRoutes from "./routes/deviceattendance.js";
 import partnerAttendanceRoutes from "./routes/partnerAttendance.js";
 import fingerprintBridgeRoutes from "./routes/fingerprintBridge.js"; // FIX: dati wala itong import
+import hr3Routes from "./routes/hr3.js"; // ADD: HR3 Integration
 import { pingDb } from "./db.js"; // FIX: para ma-verify agad ang DB connection sa startup
 
 console.log("✅ All route files imported.");
@@ -229,7 +231,10 @@ app.use("/api/reports", reportsRoutes);
 // FIX: Binago ang mounting path para maging /api/partner/sync-data at /api/partner/attendance/:id
 app.use("/api/partner", partnerAttendanceRoutes); 
 
-app.use("/api/fingerprint-bridge", fingerprintBridgeRoutes); // FIX: dati wala itong mounting — ito ang dahilan bakit 404 lagi ang /punch
+app.use("/api/fingerprint-bridge", fingerprintBridgeRoutes); 
+
+// ADD: HR3 Integration Routes
+app.use("/api/hr3", hr3Routes);
 
 app.get("/api/health", (req, res) => res.json({ ok: true }));
 
