@@ -4,20 +4,25 @@ import { q } from "../db.js";
 // Helper function para i-sanitize ang employment_type
 function normalizeEmploymentType(type) {
   if (!type) return "regular";
-  
-  const t = type.toLowerCase().trim();
-  const validTypes = ['regular', 'part_time', 'contract', 'probationary'];
-  
-  // Kung valid na agad, ibalik
+
+  const t = String(type).toLowerCase().trim();
+  const validTypes = ["regular", "part_time", "contract", "probationary"];
+
   if (validTypes.includes(t)) return t;
-  
-  // Mapping para sa mga hindi tugmang types galing HR1
-  if (t === 'contractual') return 'contract';
-  if (t === 'casual' || t === 'seasonal' || t === 'intern') return 'contract'; // fallback
-  if (t === 'full_time' || t === 'fulltime') return 'regular';
-  
-  // Default fallback
-  return 'regular';
+
+  if (t === "contractual") return "contract";
+  if (t === "casual" || t === "seasonal" || t === "intern") return "contract"; // fallback
+  if (t === "full_time" || t === "fulltime") return "regular";
+
+  return "regular";
+}
+
+const VALID_STATUSES = ["active", "inactive", "suspended", "on_leave", "terminated"];
+
+function normalizeStatus(status) {
+  if (VALID_STATUSES.includes(status)) return status;
+  if (status === "resigned") return "terminated";
+  return "active";
 }
 
 export async function syncEmployeesFromHR1() {
@@ -35,7 +40,7 @@ export async function syncEmployeesFromHR1() {
       method: "GET",
       headers: {
         "X-API-Key": apiKey,
-        "Accept": "application/json",
+        Accept: "application/json",
       },
     });
 
@@ -44,30 +49,45 @@ export async function syncEmployeesFromHR1() {
     }
 
     const result = await response.json();
-    const employees = result.data;
+    const employees = Array.isArray(result?.data) ? result.data : Array.isArray(result) ? result : [];
 
     console.log(`📥 Fetched ${employees.length} employees from HR1.`);
 
     let syncedCount = 0;
-    let errors = [];
+    const errors = [];
 
     for (const emp of employees) {
+      // Ito ang "employee_id" na ipinapadala ng HR1 sa leave/attendance payload (hal. E001).
+      // Fallback sa employee_no kung wala.
+      const code = emp.employee_id ?? emp.employee_no;
+      const label = code ?? emp.email ?? "unknown";
+
       try {
-        const existing = await q(
-          "SELECT id FROM employees WHERE employee_code = :employee_code",
-          { employee_code: emp.employee_no }
-        );
+        if (!code) throw new Error("HR1 employee has no employee_id / employee_no.");
 
-        // I-sanitize ang employment type bago i-save
+        // Hanapin gamit ang employee_id MUNA, tapos employee_no (para hindi mag-duplicate
+        // sa mga record na na-sync dati gamit ang employee_no).
+        const candidates = [...new Set([emp.employee_id, emp.employee_no].filter(Boolean).map(String))];
+        let existingId = null;
+        for (const candidate of candidates) {
+          const rows = await q("SELECT id FROM employees WHERE employee_code = :employee_code LIMIT 1", {
+            employee_code: candidate,
+          });
+          if (rows.length > 0) {
+            existingId = rows[0].id;
+            break;
+          }
+        }
+
         const safeEmploymentType = normalizeEmploymentType(emp.employment_type);
-        // I-sanitize din ang status (kung sakaling may 'resigned' sa HR1 na wala sa DB)
-        const safeStatus = ['active', 'inactive', 'suspended', 'on_leave', 'terminated'].includes(emp.status) 
-            ? emp.status 
-            : (emp.status === 'resigned' ? 'terminated' : 'active');
+        const safeStatus = normalizeStatus(emp.status);
+        const fullName =
+          emp.full_name || [emp.first_name, emp.last_name].filter(Boolean).join(" ") || null;
 
-        if (existing.length > 0) {
+        if (existingId) {
           await q(
             `UPDATE employees SET
+              employee_code = :employee_code,
               first_name = :first_name,
               last_name = :last_name,
               full_name = :full_name,
@@ -76,12 +96,13 @@ export async function syncEmployeesFromHR1() {
               employment_type = :employment_type,
               status = :status,
               updated_at = NOW()
-            WHERE employee_code = :employee_code`,
+            WHERE id = :id`,
             {
-              employee_code: emp.employee_no,
+              id: existingId,
+              employee_code: String(code),
               first_name: emp.first_name,
               last_name: emp.last_name,
-              full_name: emp.full_name,
+              full_name: fullName,
               email: emp.email,
               job_title: emp.job_title || null,
               employment_type: safeEmploymentType,
@@ -98,10 +119,10 @@ export async function syncEmployeesFromHR1() {
               :job_title, :employment_type, :status, :hire_date
             )`,
             {
-              employee_code: emp.employee_no,
+              employee_code: String(code),
               first_name: emp.first_name,
               last_name: emp.last_name,
-              full_name: emp.full_name,
+              full_name: fullName,
               email: emp.email,
               job_title: emp.job_title || null,
               employment_type: safeEmploymentType,
@@ -113,8 +134,8 @@ export async function syncEmployeesFromHR1() {
 
         syncedCount++;
       } catch (err) {
-        console.error(`❌ Failed to sync employee ${emp.employee_no}:`, err.message);
-        errors.push({ employee_no: emp.employee_no, error: err.message });
+        console.error(`❌ Failed to sync employee ${label}:`, err.message);
+        errors.push({ employee: label, error: err.message });
       }
     }
 

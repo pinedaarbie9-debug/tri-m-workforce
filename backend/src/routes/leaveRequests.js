@@ -19,12 +19,21 @@ import {
   adminCreateLeaveRequestSchema,
   updateLeaveStatusSchema,
 } from "../validators/businessValidator.js";
+import { notifyHR1LeaveStatus, recordHR1Result } from "../services/hr1Leave.js";
 
 const router = Router();
 router.use(requireAuth);
 
 const TZ = process.env.APP_TIMEZONE ?? "Asia/Manila";
 const todayISO = () => new Date().toLocaleDateString("en-CA", { timeZone: TZ });
+
+// Reason ng approver (lalo na kapag nagre-reject). Tinatanggap ang reason / rejection_reason / remarks
+// galing sa UI kahit hindi pa ito kasama sa updateLeaveStatusSchema.
+function pickReason(body) {
+  const v = body?.rejection_reason ?? body?.reason ?? body?.remarks ?? null;
+  const s = typeof v === "string" ? v.trim() : "";
+  return s ? s.slice(0, 500) : null;
+}
 
 async function loadEmployee(id) {
   const rows = await q(
@@ -142,7 +151,8 @@ router.get("/me", async (req, res) => {
     if (!req.user.employee_id) return res.status(404).json({ error: "No linked employee record." });
     const rows = await q(
       `SELECT id, employee_id, leave_type, start_date, end_date, days_count,
-              reason, status, created_at, attachment_name, attachment_type, attachment_size
+              reason, status, rejection_reason, created_at,
+              attachment_name, attachment_type, attachment_size
        FROM leave_requests
        WHERE employee_id = :employee_id
        ORDER BY created_at DESC`,
@@ -248,7 +258,7 @@ router.get("/", requireRole(...ROLE_GROUPS.MANAGEMENT), async (req, res) => {
     const rows = await q(`
       SELECT
         l.id, l.employee_id, l.leave_type, l.start_date, l.end_date, l.days_count,
-        l.reason, l.status, l.created_at,
+        l.reason, l.status, l.rejection_reason, l.reference_id, l.created_at,
         l.attachment_name, l.attachment_type, l.attachment_size,
         json_build_object(
           'id', e.id,
@@ -338,38 +348,109 @@ router.post("/", requireRole(...ROLE_GROUPS.MANAGEMENT), async (req, res) => {
 });
 
 // PATCH /leave-requests/:id/status — APPROVERS
+// Body: { status: "approved" | "rejected", reason?: string }
+// Kapag galing sa HR1 ang request (may reference_id), awtomatikong ipapadala ang resulta sa HR1.
 router.patch("/:id/status", requireRole(...ROLE_GROUPS.APPROVERS), async (req, res) => {
   try {
     const parsed = updateLeaveStatusSchema.safeParse(req.body);
     if (!parsed.success) return validationError(res, getZodError(parsed));
     const { status } = parsed.data;
+    const reason = pickReason(req.body);
 
     const rows = await q(
-      "SELECT employee_id, leave_type, start_date, end_date FROM leave_requests WHERE id = :id",
+      `SELECT l.employee_id, l.leave_type, l.start_date, l.end_date, l.status, l.reference_id,
+              e.employee_code
+       FROM leave_requests l
+       JOIN employees e ON e.id = l.employee_id
+       WHERE l.id = :id`,
       { id: req.params.id }
     );
-    if (!rows[0]) return res.status(404).json({ error: "Leave request not found." });
+    const leave = rows[0];
+    if (!leave) return res.status(404).json({ error: "Leave request not found." });
 
-    await q("UPDATE leave_requests SET status = :status WHERE id = :id", { status, id: req.params.id });
+    if (leave.status === "cancelled") {
+      return res.status(409).json({ error: "This leave request was cancelled and can no longer be approved or rejected." });
+    }
+
+    await q(
+      `UPDATE leave_requests
+       SET status = :status, rejection_reason = :rejection_reason, updated_at = NOW()
+       WHERE id = :id`,
+      {
+        status,
+        rejection_reason: status === "rejected" ? reason : null,
+        id: req.params.id,
+      }
+    );
+
+    // Ipaalam sa HR1 (hindi nito pipigilan ang approve kapag pumalya; may "resend" route sa baba)
+    let hr1 = { ok: false, skipped: true };
+    if (leave.reference_id) {
+      hr1 = await notifyHR1LeaveStatus({
+        reference_id: leave.reference_id,
+        employee_code: leave.employee_code,
+        status,
+        approved_by: req.user.full_name,
+        reason,
+      });
+      await recordHR1Result(req.params.id, hr1);
+    }
 
     await logAudit({
       userId: req.user.id,
       action: "update",
       module: "leave_requests",
       recordId: req.params.id,
-      newValues: { status },
+      newValues: { status, reason, hr1_synced: hr1.ok === true },
       ip: req.ip,
     });
 
-    await notifyEmployeeOwner(rows[0].employee_id, {
+    await notifyEmployeeOwner(leave.employee_id, {
       type: status === "approved" ? "leave_approved" : "leave_rejected",
       title: status === "approved" ? "Leave Request Approved" : "Leave Request Rejected",
-      message: `Your ${rows[0].leave_type} leave request (${rows[0].start_date} to ${rows[0].end_date}) has been ${status}.`,
+      message: `Your ${leave.leave_type} leave request (${leave.start_date} to ${leave.end_date}) has been ${status}.`,
     });
 
-    return res.json({ ok: true });
+    return res.json({
+      ok: true,
+      hr1_synced: hr1.ok === true,
+      hr1_error: hr1.ok || hr1.skipped ? null : hr1.error,
+    });
   } catch (err) {
     return safeError(res, err, "Failed to update leave status.");
+  }
+});
+
+// POST /leave-requests/:id/resend-hr1 — APPROVERS
+// Ulitin ang pagpapadala ng approve/reject sa HR1 kung pumalya noong una.
+router.post("/:id/resend-hr1", requireRole(...ROLE_GROUPS.APPROVERS), async (req, res) => {
+  try {
+    const rows = await q(
+      `SELECT l.status, l.reference_id, l.rejection_reason, e.employee_code
+       FROM leave_requests l
+       JOIN employees e ON e.id = l.employee_id
+       WHERE l.id = :id`,
+      { id: req.params.id }
+    );
+    const leave = rows[0];
+    if (!leave) return res.status(404).json({ error: "Leave request not found." });
+    if (!leave.reference_id) return res.status(400).json({ error: "This request did not come from HR1." });
+    if (!["approved", "rejected"].includes(leave.status)) {
+      return res.status(400).json({ error: "Only approved or rejected requests can be sent to HR1." });
+    }
+
+    const hr1 = await notifyHR1LeaveStatus({
+      reference_id: leave.reference_id,
+      employee_code: leave.employee_code,
+      status: leave.status,
+      approved_by: req.user.full_name,
+      reason: leave.rejection_reason,
+    });
+    await recordHR1Result(req.params.id, hr1);
+
+    return res.status(hr1.ok ? 200 : 502).json({ ok: hr1.ok === true, error: hr1.ok ? null : hr1.error });
+  } catch (err) {
+    return safeError(res, err, "Failed to resend status to HR1.");
   }
 });
 
