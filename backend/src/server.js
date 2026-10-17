@@ -3,6 +3,8 @@
 // Last updated: 2026-09-26 — FIX: idinagdag ang fingerprintBridge route (dati'y wala sa mounting list)
 // Last updated: 2026-09-26 — FIX: idinagdag ang request timeout safety net (para sa hang/ETIMEDOUT sa unhandled async errors) + startup DB ping
 // Last updated: 2026-10-17 — ADD: HR3 integration routes
+// Last updated: 2026-10-17 — FIX: hiwalay na rate limiter para sa fingerprint bridge at live enrollment polling
+//                            (dati, 300 req/15min ang general limiter kaya na-429 ang scanner na nagpa-poll kada 1s)
 
 import express from "express";
 import cors from "cors";
@@ -32,6 +34,14 @@ if (!process.env.JWT_SECRET || process.env.JWT_SECRET.length < 32) {
     "❌ Fatal: JWT_SECRET must be at least 32 characters. Generate with: openssl rand -base64 48"
   );
   process.exit(1);
+}
+
+// Babala lang (hindi titigil ang server): kapag walang bridge key sa production,
+// bukas sa publiko ang /api/fingerprint-bridge (templates, punch, enrollment).
+if (process.env.NODE_ENV === "production" && !process.env.FINGERPRINT_BRIDGE_KEY) {
+  console.warn(
+    "⚠️ FINGERPRINT_BRIDGE_KEY ay hindi naka-set. Bukas sa publiko ang /api/fingerprint-bridge. Ilagay ito sa environment variables."
+  );
 }
 
 console.log("🔧 Starting server.js...");
@@ -155,12 +165,38 @@ app.use(requestTimeout(15000)); // 15 segundo
 // 🔒 RATE LIMITERS
 // ============================================================
 
+// Mga path na madalas ang polling (scanner ~1x/segundo, web modal ~1x/0.8s).
+// Hiwalay ang limiter nila para hindi maubos ang general limit at hindi ma-429.
+const BRIDGE_PATH = "/api/fingerprint-bridge";
+const ENROLL_POLL_PATH = "/api/biometric-credentials/enroll-session";
+
 const generalLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 300,
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: "Too many requests. Please slow down." },
+  skip: (req) =>
+    req.originalUrl.startsWith(BRIDGE_PATH) ||
+    req.originalUrl.startsWith(ENROLL_POLL_PATH),
+});
+
+// Scanner program: poll (60/min) + progress heartbeat + punches
+const bridgeLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 300,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Too many bridge requests. Please slow down." },
+});
+
+// Web enrollment modal: poll kada 0.8s = ~75/min
+const enrollPollLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 200,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Too many enrollment requests. Please slow down." },
 });
 
 const authLimiter = rateLimit({
@@ -180,6 +216,8 @@ const faceLimiter = rateLimit({
 });
 
 app.use("/api", generalLimiter);
+app.use(BRIDGE_PATH, bridgeLimiter);
+app.use(ENROLL_POLL_PATH, enrollPollLimiter);
 app.use("/api/auth/login", authLimiter);
 app.use("/api/auth/face-login", faceLimiter);
 app.use("/api/auth/verify-mfa", authLimiter);
@@ -229,9 +267,9 @@ app.use("/api/timesheets", timesheetsRoutes);
 app.use("/api/reports", reportsRoutes);
 
 // FIX: Binago ang mounting path para maging /api/partner/sync-data at /api/partner/attendance/:id
-app.use("/api/partner", partnerAttendanceRoutes); 
+app.use("/api/partner", partnerAttendanceRoutes);
 
-app.use("/api/fingerprint-bridge", fingerprintBridgeRoutes); 
+app.use("/api/fingerprint-bridge", fingerprintBridgeRoutes);
 
 // ADD: HR3 Integration Routes
 app.use("/api/hr3", hr3Routes);
