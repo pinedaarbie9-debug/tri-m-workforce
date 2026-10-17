@@ -1,5 +1,5 @@
 # ============================================================
-# Node.js 22 Alpine — Express backend + pre-built React frontend
+# Node.js 22 Alpine - Express backend + pre-built React frontend
 # ============================================================
 
 FROM node:22-alpine
@@ -7,30 +7,32 @@ FROM node:22-alpine
 WORKDIR /app
 
 # ============================================================
-# Copy backend package files
+# Backend dependencies (cached unless package files change)
 # ============================================================
 COPY backend/package.json backend/package-lock.json* ./backend/
 
-# Install backend dependencies (NO cache mount so node_modules persists in final image)
-RUN cd backend && npm ci --omit=dev
+RUN cd backend && \
+    npm ci --omit=dev --no-audit --no-fund --prefer-offline \
+      --fetch-retries=5 --fetch-timeout=120000 && \
+    npm cache clean --force
 
 # ============================================================
-# Copy backend source code
+# Backend source code
 # ============================================================
 COPY backend/src ./backend/src
 
 # ============================================================
-# Copy pre-built frontend
+# Pre-built frontend (run `npm run build` and commit dist/ first)
 # ============================================================
 COPY dist ./dist
 
 # ============================================================
-# Verify na nandiyan yung files (para makita sa build logs)
+# Sanity check (shows in build logs)
 # ============================================================
-RUN echo "=== /app contents ===" && ls -la /app && \
-    echo "=== /app/backend contents ===" && ls -la /app/backend && \
-    echo "=== Check express ===" && ls -la /app/backend/node_modules/express/package.json && \
-    echo "=== Check pg ===" && ls -la /app/backend/node_modules/pg/package.json
+RUN echo "=== /app ===" && ls -la /app && \
+    echo "=== dist ===" && ls -la /app/dist && \
+    echo "=== express ===" && ls /app/backend/node_modules/express/package.json && \
+    echo "=== pg ===" && ls /app/backend/node_modules/pg/package.json
 
 # ============================================================
 # Environment
@@ -40,7 +42,4 @@ ENV PORT=3000
 
 EXPOSE 3000
 
-# ============================================================
-# Start the backend server
-# ============================================================
 CMD ["node", "backend/src/server.js"]

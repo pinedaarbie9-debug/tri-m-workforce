@@ -1,0 +1,30 @@
+# Keep the Docker build context small and fast.
+# NOTE: dist/ is NOT listed here because the Dockerfile needs it.
+
+node_modules
+backend/node_modules
+*/node_modules
+.git
+.gitignore
+
+# Secrets (set these as Environment Variables in HostForge instead)
+.env
+.env.*
+backend/.env
+
+# Logs and local tooling
+*.log
+npm-debug.log*
+*.ps1
+.vscode
+.idea
+*.swp
+.DS_Store
+Thumbs.db
+
+# Not needed inside the image
+build
+backend/dist
+*.md
+Dockerfile
+.dockerignore
