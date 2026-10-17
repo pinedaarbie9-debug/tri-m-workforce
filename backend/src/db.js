@@ -8,11 +8,24 @@ const TZ = process.env.APP_TIMEZONE ?? "Asia/Manila";
 types.setTypeParser(20, (v) => parseInt(v, 10)); // bigint (COUNT) -> number
 types.setTypeParser(1082, (v) => v);             // DATE -> "YYYY-MM-DD"
 
+// Ipakita sa log kung saan talaga kumokonekta (walang password)
+(function logDbTarget() {
+  try {
+    const u = new URL(process.env.DATABASE_URL);
+    console.log(
+      `🔌 DB target: ${u.hostname}:${u.port || "5432"}/${u.pathname.slice(1)} (user: ${u.username}, ssl: ${process.env.DB_SSL === "true"})`
+    );
+  } catch {
+    console.error("❌ DATABASE_URL is missing or invalid!");
+  }
+  if (!process.env.JWT_SECRET) console.error("❌ JWT_SECRET is missing!");
+})();
+
 export const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: process.env.DB_SSL === "true" ? { rejectUnauthorized: false } : undefined,
   max: 10,
-  connectionTimeoutMillis: 20000,
+  connectionTimeoutMillis: 8000,
   idleTimeoutMillis: 30000,
   keepAlive: true,
 });
