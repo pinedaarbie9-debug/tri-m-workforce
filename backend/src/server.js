@@ -126,20 +126,13 @@ app.use(
     },
     credentials: true,
     methods: ["GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With", "x-bridge-key"],
+    allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With", "x-bridge-key", "x-api-key"],
   })
 );
 
 // ============================================================
 // 🔒 REQUEST TIMEOUT SAFETY NET — FIX
 // ============================================================
-// Kung may async route/middleware (hal. requireAuth) na mag-throw ng error
-// (gaya ng ETIMEDOUT papunta sa DB) na walang try/catch + next(err), hindi
-// ito naka-catch ng Express 4 — nagiging "unhandled rejection" na lang ito
-// (makikita sa logs), at WALANG response na ipinapadala sa client, kaya
-// nag-hha-hang ang request hanggang mag-timeout na lang sa frontend side.
-// Ito ang safety net: kung lumagpas ang isang request nang 15s nang walang
-// response, agad na magpapadala ng malinaw na 503 sa client.
 function requestTimeout(ms) {
   return (req, res, next) => {
     const timer = setTimeout(() => {
@@ -159,16 +152,6 @@ app.use(requestTimeout(15000)); // 15 segundo
 // ============================================================
 // 🔒 RATE LIMITERS
 // ============================================================
-// FIX: Na-align na ang IP-based limiters papunta sa 1-minute window para
-// tugma sa graduated lockout ng auth.js (7 attempts = 1 min, 10+ = 5 min).
-// Dating 15-minute window ang authLimiter kaya may naiiwang "extra" na
-// lockout time kahit successful na yung susunod na login — hindi kasi
-// na-reset ang per-IP counter (memory-based ito, hiwalay sa database).
-//
-// Ang `max` dito ay sadyang ginawang MAS MATAAS (20) kaysa sa
-// FIRST_LOCKOUT_THRESHOLD (7) ng auth.js, para ang per-EMAIL na graduated
-// lockout ang laging unang mag-trigger — ang IP limiter na ito ay backstop
-// na lang laban sa mas malalaking brute-force (maraming account, iisang IP).
 
 const generalLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
@@ -179,16 +162,16 @@ const generalLimiter = rateLimit({
 });
 
 const authLimiter = rateLimit({
-  windowMs: 60 * 1000, // FIX: 15 min -> 1 min
-  max: 20,             // FIX: 10 -> 20 (mas mataas sa 7-attempt threshold ng auth.js)
+  windowMs: 60 * 1000,
+  max: 20,
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: "Too many login attempts. Try again in 1 minute." },
 });
 
 const faceLimiter = rateLimit({
-  windowMs: 60 * 1000, // FIX: 15 min -> 1 min
-  max: 10,             // FIX: 5 -> 10
+  windowMs: 60 * 1000,
+  max: 10,
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: "Too many face login attempts. Try again in 1 minute." },
@@ -242,7 +225,10 @@ app.use("/api/notifications", notificationsRoutes);
 app.use("/api/settings", settingsRoutes);
 app.use("/api/timesheets", timesheetsRoutes);
 app.use("/api/reports", reportsRoutes);
-app.use("/api/partner/attendance", partnerAttendanceRoutes);
+
+// FIX: Binago ang mounting path para maging /api/partner/sync-data at /api/partner/attendance/:id
+app.use("/api/partner", partnerAttendanceRoutes); 
+
 app.use("/api/fingerprint-bridge", fingerprintBridgeRoutes); // FIX: dati wala itong mounting — ito ang dahilan bakit 404 lagi ang /punch
 
 app.get("/api/health", (req, res) => res.json({ ok: true }));
@@ -304,12 +290,9 @@ const PORT = process.env.PORT ?? 3000;
 app.listen(PORT, "0.0.0.0", async () => {
   console.log(`✅ Workforce API + Frontend running sa http://0.0.0.0:${PORT}`);
 
-  // FIX: agad na i-verify kung okay ang koneksyon sa database sa startup,
-  // para makita mo kaagad sa logs kung may problema, hindi na kailangang
-  // maghintay ng unang request bago malaman.
   try {
     await pingDb();
   } catch (err) {
     console.error("🚨 Hindi makaconnect sa database sa startup:", err.message);
   }
-});   
+});
