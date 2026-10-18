@@ -1,4 +1,6 @@
 // backend/src/routes/deviceattendance.js
+// Last updated: 2026-10-18 — Ina-update na ang biometric_credentials.last_used_at tuwing may matagumpay na
+//                            biometric punch (kailangan ng Auth Logs tab at "Last Used" sa Biometric page).
 import { Router } from "express";
 import express from "express";
 import crypto from "node:crypto";
@@ -32,6 +34,19 @@ function calculateWorkHours(checkIn, checkOut) {
   let diff = outMinutes - inMinutes;
   if (diff < 0) diff += 24 * 60; // overnight shift
   return Math.max(0, diff / 60);
+}
+
+// Itala ang oras ng huling matagumpay na biometric punch. Hindi dapat pumalya ang punch kapag pumalya ito.
+async function markCredentialUsed(employee_id) {
+  try {
+    await q(
+      `UPDATE biometric_credentials SET last_used_at = NOW()
+       WHERE employee_id = :employee_id AND device_type = 'fingerprint' AND is_active = TRUE`,
+      { employee_id }
+    );
+  } catch (err) {
+    console.warn("⚠️ Punch saved but last_used_at update failed:", err.message);
+  }
 }
 
 export async function resolveEmployeeIdFromPin(pin) {
@@ -135,6 +150,9 @@ export async function processPunch(employee_id, dateStr, timeStr, deviceSN, meth
       ip_address: deviceSN ?? "unknown",
     }
   );
+
+  // Biometric punch lang (hindi ang fallback na employee code) ang bumabago sa "last used" ng fingerprint.
+  if (method === "biometric") await markCredentialUsed(employee_id);
 
   return logType;
 }
