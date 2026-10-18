@@ -8,6 +8,7 @@ import { safeError, validationError } from "../utils/errorResponse.js";
 import { getSettings } from "../settings.js";
 import { ROLE_GROUPS } from "../utils/roles.js";
 import { checkInSchema, attendanceQuerySchema } from "../validators/businessValidator.js";
+import { isCoveredByTraining } from "../services/hr3Training.js";
 
 const router = Router();
 router.use(requireAuth);
@@ -59,7 +60,11 @@ router.post("/checkin/me", async (req, res) => {
     let status = "present";
     if (shiftStart) {
       const lateThreshold = Number(settings.late_threshold_minutes ?? 15);
-      if (timeToMinutes(currentTime) > timeToMinutes(shiftStart) + lateThreshold) status = "late";
+      if (timeToMinutes(currentTime) > timeToMinutes(shiftStart) + lateThreshold) {
+        // Huwag i-mark na late kung nasa scheduled training (galing HR3) ang empleyado
+        const inTraining = await isCoveredByTraining(employee_id, today, shiftStart, currentTime);
+        if (!inTraining) status = "late";
+      }
     }
 
     const existing = await q(

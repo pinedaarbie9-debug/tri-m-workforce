@@ -4,6 +4,7 @@ import express from "express";
 import crypto from "node:crypto";
 import { q } from "../db.js";
 import { getSettings } from "../settings.js";
+import { isCoveredByTraining } from "../services/hr3Training.js";
 
 const router = Router();
 
@@ -95,7 +96,9 @@ export async function processPunch(employee_id, dateStr, timeStr, deviceSN, meth
         const currentMinutes = timeToMinutes(timeStr);
         const shiftMinutes = timeToMinutes(shiftStart);
         if (currentMinutes !== null && shiftMinutes !== null && currentMinutes > shiftMinutes + lateThreshold) {
-          status = "late";
+          // Huwag i-mark na late kung nasa scheduled training (galing HR3) ang empleyado
+          const inTraining = await isCoveredByTraining(employee_id, dateStr, shiftStart, timeStr);
+          if (!inTraining) status = "late";
         }
       }
       await q(
