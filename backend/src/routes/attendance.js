@@ -1,4 +1,6 @@
 // backend/src/routes/attendance.js
+// Last updated: 2026-10-18 — Overnight check-out: hahanapin ang bukas na attendance row ngayon O kahapon
+//                            (para sa shift na nagsimula kahapon), at tama na ang work hours kapag lumampas sa hatinggabi.
 import { Router } from "express";
 import crypto from "node:crypto";
 import { q } from "../db.js";
@@ -32,6 +34,15 @@ function timeToMinutes(t) {
   if (!t) return null;
   const [h, m] = String(t).split(":").map(Number);
   return h * 60 + m;
+}
+
+// Pinakamahabang oras (minuto) mula check-in na maaari pang i-check out sa row ng KAHAPON (overnight shift).
+const MAX_OVERNIGHT_MINUTES = 18 * 60;
+
+// Minuto mula check-in hanggang check-out; kapag negatibo, lumampas sa hatinggabi kaya dagdagan ng 24 oras.
+function elapsedMinutes(checkIn, checkOut) {
+  const diff = timeToMinutes(checkOut) - timeToMinutes(checkIn);
+  return diff < 0 ? diff + 1440 : diff;
 }
 
 router.post("/checkin/me", async (req, res) => {
@@ -111,14 +122,37 @@ router.post("/checkout/me", async (req, res) => {
       return res.status(403).json({ error: "Biometric verification required for check-out." });
     }
 
-    const existing = await q(
-      "SELECT id, check_in, check_out FROM attendance WHERE employee_id = :employee_id AND date = :today",
-      { employee_id, today }
+    // Kunin ang row ngayon at kahapon (para sa overnight shift na nagsimula kahapon).
+    // Bawat named param ay isang beses lang ginagamit sa query.
+    const rows = await q(
+      `SELECT id, check_in, check_out, (date = CAST(:today_a AS date)) AS is_today
+       FROM attendance
+       WHERE employee_id = :employee_id
+         AND date IN (CAST(:today_b AS date), CAST(:today_c AS date) - 1)
+       ORDER BY date DESC`,
+      { employee_id, today_a: today, today_b: today, today_c: today }
     );
-    if (!existing[0] || !existing[0].check_in) return validationError(res, "You have not checked in today.");
-    if (existing[0].check_out) return res.status(409).json({ error: "You have already checked out today." });
 
-    const workHours = Math.max(0, (timeToMinutes(currentTime) - timeToMinutes(existing[0].check_in)) / 60);
+    const todayRow = rows.find((r) => r.is_today);
+    const yesterdayRow = rows.find((r) => !r.is_today);
+
+    let target = null;
+    if (todayRow?.check_in && !todayRow.check_out) {
+      target = todayRow;
+    } else if (
+      yesterdayRow?.check_in &&
+      !yesterdayRow.check_out &&
+      elapsedMinutes(yesterdayRow.check_in, currentTime) <= MAX_OVERNIGHT_MINUTES
+    ) {
+      target = yesterdayRow; // overnight shift: nag-check in kahapon, nag-check out ngayon
+    }
+
+    if (!target) {
+      if (todayRow?.check_out) return res.status(409).json({ error: "You have already checked out today." });
+      return validationError(res, "You have not checked in today.");
+    }
+
+    const workHours = elapsedMinutes(target.check_in, currentTime) / 60;
     const overtimeHours = Math.max(0, workHours - Number(settings.overtime_threshold_hours ?? 8));
 
     await q(
@@ -127,7 +161,7 @@ router.post("/checkout/me", async (req, res) => {
         check_out: currentTime,
         work_hours: workHours.toFixed(2),
         overtime_hours: overtimeHours.toFixed(2),
-        id: existing[0].id,
+        id: target.id,
       }
     );
 
