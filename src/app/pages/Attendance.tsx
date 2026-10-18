@@ -16,6 +16,50 @@ const statusConfig: Record<AttendanceStatus, { label: string; className: string;
 };
 
 const POLL_MS = 15000;
+const TIMEZONE = "Asia/Manila";
+
+/** "14:50:07" -> "2:50 PM". Full timestamps are converted to Asia/Manila. */
+function formatTime(value?: string | null): string {
+  if (!value) return "—";
+
+  const plain = /^(\d{1,2}):(\d{2})(?::(\d{2}))?$/.exec(value.trim());
+  if (plain) {
+    let h = parseInt(plain[1], 10);
+    const m = plain[2];
+    const suffix = h >= 12 ? "PM" : "AM";
+    h = h % 12 === 0 ? 12 : h % 12;
+    return `${h}:${m} ${suffix}`;
+  }
+
+  const d = new Date(value.includes(" ") && !value.includes("T") ? value.replace(" ", "T") : value);
+  if (isNaN(d.getTime())) return value;
+  return d.toLocaleTimeString("en-PH", {
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+    timeZone: TIMEZONE,
+  });
+}
+
+/** 14.02 -> "14h 1m" */
+function formatHours(value?: number | string | null): string {
+  const n = Number(value);
+  if (!value || isNaN(n) || n <= 0) return "—";
+  const totalMinutes = Math.round(n * 60);
+  const h = Math.floor(totalMinutes / 60);
+  const m = totalMinutes % 60;
+  if (h === 0) return `${m}m`;
+  if (m === 0) return `${h}h`;
+  return `${h}h ${m}m`;
+}
+
+/** "2026-10-18" -> "Oct 18, 2026" */
+function formatDate(value?: string | null): string {
+  if (!value) return "—";
+  const d = new Date(value.length === 10 ? `${value}T00:00:00` : value);
+  if (isNaN(d.getTime())) return value;
+  return format(d, "MMM dd, yyyy");
+}
 
 export function AttendancePage() {
   const [records, setRecords] = useState<Attendance[]>([]);
@@ -68,10 +112,15 @@ export function AttendancePage() {
     on_leave: records.filter((r) => r.status === "on_leave").length,
   };
 
+  const thClass = "text-left px-4 sm:px-5 py-3.5 text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap";
+
   return (
     <div className="p-4 sm:p-6 space-y-4 sm:space-y-6">
-      <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }}
-        className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-primary via-violet-600 to-indigo-700 p-5 sm:p-6 text-white shadow-lg">
+      <motion.div
+        initial={{ opacity: 0, y: -10 }}
+        animate={{ opacity: 1, y: 0 }}
+        className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-primary via-violet-600 to-indigo-700 p-5 sm:p-6 text-white shadow-lg"
+      >
         <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
           <div className="min-w-0">
             <h1 className="text-xl sm:text-2xl font-bold">Attendance Management</h1>
@@ -96,14 +145,25 @@ export function AttendancePage() {
       <div className="flex flex-col gap-3">
         <div className="relative w-full">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-          <input value={search} onChange={(e) => { setSearch(e.target.value); setPage(1); }} placeholder="Search employees..."
-            className="w-full pl-9 pr-4 py-2.5 text-sm bg-card border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40" />
+          <input
+            value={search}
+            onChange={(e) => { setSearch(e.target.value); setPage(1); }}
+            placeholder="Search employees..."
+            className="w-full pl-9 pr-4 py-2.5 text-sm bg-card border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40"
+          />
         </div>
         <div className="grid grid-cols-2 sm:flex gap-2 sm:gap-3">
-          <input type="date" value={date} onChange={(e) => { setDate(e.target.value); setPage(1); }}
-            className="px-3 py-2.5 text-sm bg-card border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary/20" />
-          <select value={statusFilter} onChange={(e) => { setStatusFilter(e.target.value as AttendanceStatus | "all"); setPage(1); }}
-            className="px-3 py-2.5 text-sm bg-card border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary/20">
+          <input
+            type="date"
+            value={date}
+            onChange={(e) => { setDate(e.target.value); setPage(1); }}
+            className="px-3 py-2.5 text-sm bg-card border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary/20"
+          />
+          <select
+            value={statusFilter}
+            onChange={(e) => { setStatusFilter(e.target.value as AttendanceStatus | "all"); setPage(1); }}
+            className="px-3 py-2.5 text-sm bg-card border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary/20"
+          >
             <option value="all">All Status</option>
             <option value="present">Present</option>
             <option value="absent">Absent</option>
@@ -122,6 +182,7 @@ export function AttendancePage() {
           <Loader2 className="w-5 h-5 mr-2 animate-spin" /> Loading attendance...
         </div>
       )}
+
       {!loading && error && (
         <div className="p-4 bg-red-50 border border-red-200 rounded-xl text-sm text-red-700">
           Failed to load attendance: {error}
@@ -134,14 +195,14 @@ export function AttendancePage() {
             <table className="w-full min-w-[800px]">
               <thead>
                 <tr className="border-b border-border bg-muted/30">
-                  <th className="text-left px-4 sm:px-5 py-3.5 text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap">Employee</th>
-                  <th className="text-left px-4 sm:px-5 py-3.5 text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap">Department</th>
-                  <th className="text-left px-4 sm:px-5 py-3.5 text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap">Date</th>
-                  <th className="text-left px-4 sm:px-5 py-3.5 text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap">Check In</th>
-                  <th className="text-left px-4 sm:px-5 py-3.5 text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap">Check Out</th>
-                  <th className="text-left px-4 sm:px-5 py-3.5 text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap">Work Hours</th>
-                  <th className="text-left px-4 sm:px-5 py-3.5 text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap">Overtime</th>
-                  <th className="text-left px-4 sm:px-5 py-3.5 text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap">Status</th>
+                  <th className={thClass}>Employee</th>
+                  <th className={thClass}>Department</th>
+                  <th className={thClass}>Date</th>
+                  <th className={thClass}>Time In</th>
+                  <th className={thClass}>Time Out</th>
+                  <th className={thClass}>Work Hours</th>
+                  <th className={thClass}>Overtime</th>
+                  <th className={thClass}>Status</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-border">
@@ -169,11 +230,13 @@ export function AttendancePage() {
                         </div>
                       </td>
                       <td className="px-4 sm:px-5 py-4 text-sm text-muted-foreground whitespace-nowrap">{getDeptName(record)}</td>
-                      <td className="px-4 sm:px-5 py-4 text-sm text-muted-foreground whitespace-nowrap">{record.date}</td>
-                      <td className="px-4 sm:px-5 py-4 text-sm font-mono text-foreground whitespace-nowrap">{record.check_in ?? "—"}</td>
-                      <td className="px-4 sm:px-5 py-4 text-sm font-mono text-foreground whitespace-nowrap">{record.check_out ?? "—"}</td>
-                      <td className="px-4 sm:px-5 py-4 text-sm text-foreground whitespace-nowrap">{record.work_hours ? `${record.work_hours}h` : "—"}</td>
-                      <td className="px-4 sm:px-5 py-4 text-sm text-orange-600 font-medium whitespace-nowrap">{record.overtime_hours ? `+${record.overtime_hours}h` : "—"}</td>
+                      <td className="px-4 sm:px-5 py-4 text-sm text-muted-foreground whitespace-nowrap">{formatDate(record.date)}</td>
+                      <td className="px-4 sm:px-5 py-4 text-sm font-medium text-foreground whitespace-nowrap">{formatTime(record.check_in)}</td>
+                      <td className="px-4 sm:px-5 py-4 text-sm font-medium text-foreground whitespace-nowrap">{formatTime(record.check_out)}</td>
+                      <td className="px-4 sm:px-5 py-4 text-sm text-foreground whitespace-nowrap">{formatHours(record.work_hours)}</td>
+                      <td className="px-4 sm:px-5 py-4 text-sm text-orange-600 font-medium whitespace-nowrap">
+                        {record.overtime_hours ? `+${formatHours(record.overtime_hours)}` : "—"}
+                      </td>
                       <td className="px-4 sm:px-5 py-4">
                         <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium whitespace-nowrap ${cfg.className}`}>
                           <Icon className="w-3 h-3" /> {cfg.label}
@@ -191,15 +254,27 @@ export function AttendancePage() {
               Showing {filtered.length === 0 ? 0 : (page - 1) * perPage + 1}–{Math.min(page * perPage, filtered.length)} of {filtered.length} records
             </p>
             <div className="flex items-center gap-1 flex-wrap justify-center">
-              <button disabled={page <= 1} onClick={() => setPage((p) => p - 1)} className="w-8 h-8 rounded-lg flex items-center justify-center hover:bg-muted disabled:opacity-40 transition-colors">
+              <button
+                disabled={page <= 1}
+                onClick={() => setPage((p) => p - 1)}
+                className="w-8 h-8 rounded-lg flex items-center justify-center hover:bg-muted disabled:opacity-40 transition-colors"
+              >
                 <ChevronLeft className="w-4 h-4" />
               </button>
               {Array.from({ length: totalPages }, (_, i) => i + 1).slice(0, 5).map((p) => (
-                <button key={p} onClick={() => setPage(p)} className={`w-8 h-8 rounded-lg text-xs font-medium transition-colors ${p === page ? "bg-primary text-white" : "hover:bg-muted text-muted-foreground"}`}>
+                <button
+                  key={p}
+                  onClick={() => setPage(p)}
+                  className={`w-8 h-8 rounded-lg text-xs font-medium transition-colors ${p === page ? "bg-primary text-white" : "hover:bg-muted text-muted-foreground"}`}
+                >
                   {p}
                 </button>
               ))}
-              <button disabled={page >= totalPages} onClick={() => setPage((p) => p + 1)} className="w-8 h-8 rounded-lg flex items-center justify-center hover:bg-muted disabled:opacity-40 transition-colors">
+              <button
+                disabled={page >= totalPages}
+                onClick={() => setPage((p) => p + 1)}
+                className="w-8 h-8 rounded-lg flex items-center justify-center hover:bg-muted disabled:opacity-40 transition-colors"
+              >
                 <ChevronRight className="w-4 h-4" />
               </button>
             </div>
