@@ -1,4 +1,6 @@
 // backend/src/routes/hr3.js
+// Last updated: 2026-10-18 — 10-minute grace (late_minutes at lates parehong computation),
+//                            idinagdag ang missing_checkouts at unscheduled_days sa /attendance-summary
 import crypto from "node:crypto";
 import { Router } from "express";
 import { q } from "../db.js";
@@ -73,9 +75,10 @@ function parseRange(query) {
 // ============================================================
 const TZ = process.env.APP_TIMEZONE ?? "Asia/Manila";
 
-// Grace period sa late (minuto). Default 0 = bawat minuto pagkatapos ng shift start ay late.
+// Grace period sa late (minuto). Default 10 (hiniling ng HR3).
 // Kapag lumampas sa grace, ang BUONG late minutes ang bibilangin (hindi lang ang lampas).
-const LATE_GRACE_MINUTES = Math.max(0, Number(process.env.LATE_GRACE_MINUTES ?? 0) || 0);
+// Kapag may LATE_GRACE_MINUTES sa HostForge env vars, iyon ang masusunod, kaya burahin o i-set sa 10.
+const LATE_GRACE_MINUTES = Math.max(0, Number(process.env.LATE_GRACE_MINUTES ?? 10) || 0);
 
 // ⚠️ Palitan ito kung iba ang pangalan ng columns sa `attendance` table mo.
 const TIME_IN_COL = "check_in";
@@ -133,8 +136,8 @@ function toMinutes(value) {
 /**
  * Late at undertime (minuto) ng isang araw.
  * - Overnight shift: kapag shift_end <= shift_start, sa susunod na araw ang end.
- * - late      = time_in - shift_start (kung positibo, at lampas sa grace)
- * - undertime = shift_end - time_out (kung positibo)
+ * - late      = time_in - shift_start (kung positibo; kapag <= grace, 0; kapag lampas, buong minuto)
+ * - undertime = shift_end - time_out (kung positibo; walang grace)
  * Kapag walang shift, walang time in, o walang time out, 0 ang bahaging iyon.
  */
 function computeDayMinutes({ shiftStart, shiftEnd, timeIn, timeOut }) {
@@ -175,9 +178,12 @@ function computeDayMinutes({ shiftStart, shiftEnd, timeIn, timeOut }) {
 }
 
 /**
- * Per-empleyado na kabuuan ng late at undertime sa loob ng range.
- * Nilalaktawan ang mga araw na sakop ng approved leave o training.
- * @returns {Promise<Map<string, { late: number, under: number }>>}
+ * Per-empleyado na kabuuan sa loob ng range. Nilalaktawan ang mga araw na sakop ng approved leave o training.
+ * - late / under     = kabuuang minuto
+ * - lates            = bilang ng araw na may late > 0 (pagkatapos ng grace), kaya tugma sa late_minutes
+ * - missingCheckouts = araw na may check-in pero walang check-out (o iisang punch lang)
+ * - unscheduled      = araw na present (may check-in o status present/late) pero walang assigned shift
+ * @returns {Promise<Map<string, { late: number, under: number, lates: number, missingCheckouts: number, unscheduled: number }>>}
  */
 async function computeLateUndertime(from, to, hasTraining) {
   const inTrainingExpr = hasTraining
@@ -191,6 +197,7 @@ async function computeLateUndertime(from, to, hasTraining) {
     `
     SELECT
       e.employee_code AS code,
+      a.status AS status,
       CAST(a.${TIME_IN_COL} AS text) AS time_in,
       CAST(a.${TIME_OUT_COL} AS text) AS time_out,
       CAST(sh.start_time AS text) AS shift_start,
@@ -221,8 +228,23 @@ async function computeLateUndertime(from, to, hasTraining) {
   const totals = new Map();
   for (const r of rows) {
     const key = String(r.code);
-    if (!totals.has(key)) totals.set(key, { late: 0, under: 0 });
+    if (!totals.has(key)) {
+      totals.set(key, { late: 0, under: 0, lates: 0, missingCheckouts: 0, unscheduled: 0 });
+    }
     if (r.on_leave || r.in_training) continue;
+
+    const t = totals.get(key);
+    const tin = toMinutes(r.time_in);
+    const tout = toMinutes(r.time_out);
+    const status = String(r.status ?? "").toLowerCase();
+
+    // Walang assigned shift: walang late/undertime, pero bilangin para maayos ng HR ang assignments.
+    const hasShift = toMinutes(r.shift_start) != null && toMinutes(r.shift_end) != null;
+    const isPresent = tin != null || status === "present" || status === "late";
+    if (!hasShift && isPresent) t.unscheduled += 1;
+
+    // May check-in pero walang check-out (o iisang punch lang ang naitala).
+    if (tin != null && (tout == null || tout === tin)) t.missingCheckouts += 1;
 
     const day = computeDayMinutes({
       shiftStart: r.shift_start,
@@ -230,9 +252,9 @@ async function computeLateUndertime(from, to, hasTraining) {
       timeIn: r.time_in,
       timeOut: r.time_out,
     });
-    const t = totals.get(key);
     t.late += day.late;
     t.under += day.under;
+    if (day.late > 0) t.lates += 1;
   }
   return totals;
 }
@@ -240,15 +262,19 @@ async function computeLateUndertime(from, to, hasTraining) {
 // ============================================================
 // GET /api/hr3/attendance-summary?from=&to=
 //
-// absences          = araw na "absent" na HINDI sakop ng approved leave at HINDI sakop ng training
-// lates             = bilang ng araw na may status "late"
-// late_minutes      = kabuuang minuto ng pagkahuli (time_in - shift_start), hindi kasama ang leave/training days
-// undertime_minutes = kabuuang minuto ng maagang pag-alis (shift_end - time_out), hindi kasama ang leave/training days
-// leave_days        = bilang ng araw (calendar days) ng APPROVED leave na nag-o-overlap sa range
-// training_days     = bilang ng araw na may scheduled training (galing HR3) sa loob ng range
+// absences           = araw na "absent" na HINDI sakop ng approved leave at HINDI sakop ng training
+// lates              = bilang ng araw na late pagkatapos ng grace period (tugma sa late_minutes)
+// late_minutes       = kabuuang minuto ng pagkahuli (time_in - shift_start); 10-minute grace, at kapag lumampas
+//                      ay buong minuto ang bibilangin. Hindi kasama ang leave/training days
+// undertime_minutes  = kabuuang minuto ng maagang pag-alis (shift_end - time_out), hindi kasama ang leave/training days
+// missing_checkouts  = araw na may check-in pero walang check-out (hindi isinasama sa undertime, hindi sine-score)
+// unscheduled_days   = araw na present pero walang assigned shift (walang default shift)
+// leave_days         = bilang ng araw (calendar days) ng APPROVED leave na nag-o-overlap sa range
+// training_days      = bilang ng araw na may scheduled training (galing HR3) sa loob ng range
 //
 // Kapag pumalya ang computation ng late/undertime (hal. mali ang pangalan ng column),
-// babalik sa lumang estimate (lates x 15, undertime 0) at may warning sa logs.
+// babalik sa lumang estimate (lates x 15, undertime 0, missing_checkouts 0, unscheduled_days 0)
+// at may warning sa logs.
 // ============================================================
 router.get("/attendance-summary", async (req, res) => {
   try {
@@ -343,7 +369,7 @@ router.get("/attendance-summary", async (req, res) => {
       params
     );
 
-    // Totoong late / undertime minutes. Kapag pumalya, gagamitin ang estimate mula sa query sa itaas.
+    // Totoong late / undertime / missing check-out / unscheduled. Kapag pumalya, gagamitin ang estimate sa itaas.
     let computed = null;
     try {
       computed = await computeLateUndertime(from, to, hasTraining);
@@ -357,9 +383,11 @@ router.get("/attendance-summary", async (req, res) => {
         employee_id: r.employee_id,
         days_present: Number(r.days_present),
         absences: Number(r.absences),
-        lates: Number(r.lates),
+        lates: computed ? (calc?.lates ?? 0) : Number(r.lates),
         late_minutes: computed ? (calc?.late ?? 0) : Number(r.late_minutes),
         undertime_minutes: computed ? (calc?.under ?? 0) : Number(r.undertime_minutes),
+        missing_checkouts: computed ? (calc?.missingCheckouts ?? 0) : 0,
+        unscheduled_days: computed ? (calc?.unscheduled ?? 0) : 0,
         leave_days: Number(r.leave_days),
         training_days: Number(r.training_days),
       };
