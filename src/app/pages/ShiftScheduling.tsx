@@ -59,6 +59,8 @@ interface ShiftType {
   type: string;
   name: string;
   color: string;
+  start_time?: string; // "HH:mm"
+  end_time?: string; // "HH:mm"
 }
 interface Assignment {
   id: string;
@@ -70,13 +72,34 @@ interface Assignment {
   shift_name: string;
   shift_type: string;
   shift_color: string;
+  shift_start?: string;
+  shift_end?: string;
 }
 
 const iconFor = (type: string) =>
   type === "day" ? Sun : type === "evening" ? Sunset : Moon;
 
-const emptyShiftForm = { type: "day", name: "", color: "#f59e0b" };
+// 🔒 Default na oras kada pumili ng type (pwede pa ring baguhin ng user)
+const DEFAULT_TIMES: Record<string, { start_time: string; end_time: string }> = {
+  day: { start_time: "08:00", end_time: "17:00" },
+  evening: { start_time: "16:00", end_time: "00:30" },
+  night: { start_time: "22:00", end_time: "06:00" },
+  rotating: { start_time: "08:00", end_time: "17:00" },
+};
+
+const emptyShiftForm = {
+  type: "day",
+  name: "",
+  color: "#f59e0b",
+  start_time: DEFAULT_TIMES.day.start_time,
+  end_time: DEFAULT_TIMES.day.end_time,
+};
 const emptyAssignForm = { employee_id: "", shift_id: "" };
+
+const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
+
+// "HH:mm:ss" -> "HH:mm" (para sa display)
+const hhmm = (t?: string) => (t ? t.slice(0, 5) : "");
 
 export function ShiftSchedulingPage() {
   // 🔒 MONTHLY view state
@@ -146,11 +169,25 @@ export function ShiftSchedulingPage() {
     assignmentsByDate[key].push(a);
   }
 
+  // 🔒 Kapag nagpalit ng type, ilagay ang default na oras
+  function handleTypeChange(type: string) {
+    const t = DEFAULT_TIMES[type] ?? DEFAULT_TIMES.day;
+    setShiftForm((f) => ({ ...f, type, start_time: t.start_time, end_time: t.end_time }));
+  }
+
   async function handleCreateShift(e: React.FormEvent) {
     e.preventDefault();
     setFormError(null);
     if (!shiftForm.name.trim()) {
       setFormError("Shift name is required.");
+      return;
+    }
+    if (!TIME_RE.test(shiftForm.start_time) || !TIME_RE.test(shiftForm.end_time)) {
+      setFormError("Start time and end time are required.");
+      return;
+    }
+    if (shiftForm.start_time === shiftForm.end_time) {
+      setFormError("Start time and end time must not be the same.");
       return;
     }
     setSavingShift(true);
@@ -229,6 +266,8 @@ export function ShiftSchedulingPage() {
         <div className="flex items-center gap-2 sm:gap-4 flex-wrap">
           {shiftTypes.map((st) => {
             const Icon = iconFor(st.type);
+            const hasTimes =
+              st.start_time && st.end_time && hhmm(st.start_time) !== hhmm(st.end_time);
             return (
               <div
                 key={st.id}
@@ -244,6 +283,7 @@ export function ShiftSchedulingPage() {
                   style={{ color: st.color }}
                 >
                   {st.name}
+                  {hasTimes ? ` · ${hhmm(st.start_time)}–${hhmm(st.end_time)}` : ""}
                 </span>
               </div>
             );
@@ -373,6 +413,10 @@ export function ShiftSchedulingPage() {
                       <div className="space-y-1">
                         {dayAssignments.slice(0, 3).map((block) => {
                           const Icon = iconFor(block.shift_type);
+                          const hasTimes =
+                            block.shift_start &&
+                            block.shift_end &&
+                            hhmm(block.shift_start) !== hhmm(block.shift_end);
                           return (
                             <div
                               key={block.id}
@@ -381,6 +425,11 @@ export function ShiftSchedulingPage() {
                                 backgroundColor: `${block.shift_color}20`,
                                 borderColor: `${block.shift_color}50`,
                               }}
+                              title={
+                                hasTimes
+                                  ? `${block.employee_name} · ${block.shift_name} ${hhmm(block.shift_start)}–${hhmm(block.shift_end)}`
+                                  : `${block.employee_name} · ${block.shift_name}`
+                              }
                             >
                               <div className="flex items-center gap-1">
                                 <Icon
@@ -394,6 +443,14 @@ export function ShiftSchedulingPage() {
                                   {block.employee_name.split(" ")[0]}
                                 </span>
                               </div>
+                              {hasTimes && (
+                                <p
+                                  className="leading-tight opacity-80"
+                                  style={{ color: block.shift_color }}
+                                >
+                                  {hhmm(block.shift_start)}–{hhmm(block.shift_end)}
+                                </p>
+                              )}
                             </div>
                           );
                         })}
@@ -526,9 +583,7 @@ export function ShiftSchedulingPage() {
               </label>
               <select
                 value={shiftForm.type}
-                onChange={(e) =>
-                  setShiftForm({ ...shiftForm, type: e.target.value })
-                }
+                onChange={(e) => handleTypeChange(e.target.value)}
                 className="w-full px-3.5 py-2.5 rounded-lg border border-border bg-input-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/20"
               >
                 <option value="day">Day</option>
@@ -537,6 +592,40 @@ export function ShiftSchedulingPage() {
                 <option value="rotating">Rotating</option>
               </select>
             </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <label className="text-sm font-medium text-foreground">
+                  Start Time
+                </label>
+                <input
+                  type="time"
+                  value={shiftForm.start_time}
+                  onChange={(e) =>
+                    setShiftForm({ ...shiftForm, start_time: e.target.value })
+                  }
+                  required
+                  className="w-full px-3.5 py-2.5 rounded-lg border border-border bg-input-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/20"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-sm font-medium text-foreground">
+                  End Time
+                </label>
+                <input
+                  type="time"
+                  value={shiftForm.end_time}
+                  onChange={(e) =>
+                    setShiftForm({ ...shiftForm, end_time: e.target.value })
+                  }
+                  required
+                  className="w-full px-3.5 py-2.5 rounded-lg border border-border bg-input-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/20"
+                />
+              </div>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              If the end time is earlier than the start time, the shift ends the
+              next day (overnight shift).
+            </p>
             <div className="flex flex-col sm:flex-row justify-end gap-2 pt-2">
               <button
                 type="button"
@@ -600,11 +689,16 @@ export function ShiftSchedulingPage() {
                 className="w-full px-3.5 py-2.5 rounded-lg border border-border bg-input-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/20"
               >
                 <option value="">Select shift</option>
-                {shiftTypes.map((st) => (
-                  <option key={st.id} value={st.id}>
-                    {st.name}
-                  </option>
-                ))}
+                {shiftTypes.map((st) => {
+                  const hasTimes =
+                    st.start_time && st.end_time && hhmm(st.start_time) !== hhmm(st.end_time);
+                  return (
+                    <option key={st.id} value={st.id}>
+                      {st.name}
+                      {hasTimes ? ` (${hhmm(st.start_time)}–${hhmm(st.end_time)})` : ""}
+                    </option>
+                  );
+                })}
               </select>
             </div>
             <div className="flex flex-col sm:flex-row justify-end gap-2 pt-2">
