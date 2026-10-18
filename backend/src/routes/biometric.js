@@ -1,4 +1,5 @@
 // backend/src/routes/biometric.js
+// Last updated: 2026-10-18 — GET / ay ibinabalik na ang `last_used_at` (kailangan ng Auth Logs tab sa frontend).
 import { Router } from "express";
 import crypto from "node:crypto";
 import { q } from "../db.js";
@@ -20,13 +21,31 @@ import {
 const router = Router();
 router.use(requireAuth);
 
+// Ang Auth Logs tab ay binabasa ang `last_used_at` ng bawat credential. Kapag may ganoong column sa
+// biometric_credentials, isasama ito sa listahan. Kapag wala, NULL ang ibabalik para hindi masira ang buong listahan.
+let hasLastUsedColumn = false;
+async function lastUsedSelect() {
+  if (!hasLastUsedColumn) {
+    const cols = await q(
+      `SELECT 1 FROM information_schema.columns
+       WHERE table_schema = current_schema()
+         AND table_name = 'biometric_credentials'
+         AND column_name = 'last_used_at'
+       LIMIT 1`
+    );
+    hasLastUsedColumn = cols.length > 0;
+  }
+  return hasLastUsedColumn ? "b.last_used_at" : "NULL";
+}
+
 router.get("/", requireRole(...ROLE_GROUPS.MANAGEMENT), async (req, res) => {
   try {
     const includeInactive = req.query.include_inactive === "true";
+    const lastUsedSql = await lastUsedSelect();
     const rows = await q(`
       SELECT
         b.id, b.employee_id, b.device_type, b.device_name, b.credential_id,
-        b.is_active, b.registered_at,
+        b.is_active, b.registered_at, ${lastUsedSql} AS last_used_at,
         json_build_object(
           'id', e.id,
           'full_name', COALESCE(NULLIF(e.full_name, ''), CONCAT(e.first_name, ' ', e.last_name)),
