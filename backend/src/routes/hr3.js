@@ -1,6 +1,7 @@
 // backend/src/routes/hr3.js
 // Last updated: 2026-10-18 — 10-minute grace (late_minutes at lates parehong computation),
-//                            idinagdag ang missing_checkouts at unscheduled_days sa /attendance-summary
+//                            idinagdag ang missing_checkouts at unscheduled_days sa /attendance-summary,
+//                            absences ay kasama na ang araw na MAY SCHEDULE pero WALANG attendance row
 import crypto from "node:crypto";
 import { Router } from "express";
 import { q } from "../db.js";
@@ -74,6 +75,16 @@ function parseRange(query) {
 // Late / undertime computation
 // ============================================================
 const TZ = process.env.APP_TIMEZONE ?? "Asia/Manila";
+
+// Ang petsa ngayon (YYYY-MM-DD) sa APP_TIMEZONE. Ang araw na ito mismo ay HINDI pa binibilang na absent.
+function todayInTz() {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: TZ,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date());
+}
 
 // Grace period sa late (minuto). Default 10 (hiniling ng HR3).
 // Kapag lumampas sa grace, ang BUONG late minutes ang bibilangin (hindi lang ang lampas).
@@ -259,10 +270,64 @@ async function computeLateUndertime(from, to, hasTraining) {
   return totals;
 }
 
+/**
+ * Absent dahil WALANG PUNCH sa araw na MAY SCHEDULE.
+ * Binibilang ang araw na:
+ *   - may row sa employee_shifts,
+ *   - lumipas na (bago ang petsa ngayon sa APP_TIMEZONE; hindi pa binibilang ang araw na ito mismo),
+ *   - WALANG row sa attendance (kapag may row, ang status nito ang masusunod, kasama ang tahasang 'absent'),
+ *   - hindi sakop ng approved leave,
+ *   - hindi sakop ng training (galing HR3),
+ *   - hindi lampas sa termination_date ng empleyado.
+ * Walang isinusulat sa database; kinakalkula lang ito sa bawat tawag, kaya sumusunod ito sa kasalukuyang schedule.
+ * @returns {Promise<Map<string, number>>} employee_code -> bilang ng araw
+ */
+async function computeScheduledAbsences(from, to, hasTraining) {
+  const inTrainingExpr = hasTraining
+    ? `EXISTS (
+         SELECT 1 FROM hr3_training_sessions t
+         WHERE t.employee_code = UPPER(e.employee_code) AND t.date = CAST(es.date AS date)
+       )`
+    : "FALSE";
+
+  const rows = await q(
+    `
+    SELECT
+      e.employee_code AS code,
+      COUNT(DISTINCT CAST(es.date AS date)) AS missing_days
+    FROM employee_shifts es
+    JOIN employees e ON e.id = es.employee_id
+    WHERE CAST(es.date AS date) BETWEEN CAST(:sa_from AS date) AND CAST(:sa_to AS date)
+      AND CAST(es.date AS date) < CAST(:sa_today AS date)
+      AND (e.termination_date IS NULL OR CAST(es.date AS date) <= CAST(e.termination_date AS date))
+      AND NOT EXISTS (
+        SELECT 1 FROM attendance a
+        WHERE a.employee_id = es.employee_id
+          AND CAST(a.date AS date) = CAST(es.date AS date)
+      )
+      AND NOT EXISTS (
+        SELECT 1 FROM leave_requests l
+        WHERE l.employee_id = es.employee_id
+          AND l.status = 'approved'
+          AND CAST(es.date AS date) BETWEEN CAST(l.start_date AS date) AND CAST(l.end_date AS date)
+      )
+      AND NOT ${inTrainingExpr}
+    GROUP BY e.employee_code
+    `,
+    { sa_from: from, sa_to: to, sa_today: todayInTz() }
+  );
+
+  const map = new Map();
+  for (const r of rows) map.set(String(r.code), Number(r.missing_days));
+  return map;
+}
+
 // ============================================================
 // GET /api/hr3/attendance-summary?from=&to=
 //
-// absences           = araw na "absent" na HINDI sakop ng approved leave at HINDI sakop ng training
+// absences           = araw na "absent" na HINDI sakop ng approved leave at HINDI sakop ng training,
+//                      PLUS ang araw na may schedule (employee_shifts) pero walang attendance row at lumipas na
+//                      (hindi kasama ang leave/training days at ang araw ngayon)
 // lates              = bilang ng araw na late pagkatapos ng grace period (tugma sa late_minutes)
 // late_minutes       = kabuuang minuto ng pagkahuli (time_in - shift_start); 10-minute grace, at kapag lumampas
 //                      ay buong minuto ang bibilangin. Hindi kasama ang leave/training days
@@ -274,7 +339,8 @@ async function computeLateUndertime(from, to, hasTraining) {
 //
 // Kapag pumalya ang computation ng late/undertime (hal. mali ang pangalan ng column),
 // babalik sa lumang estimate (lates x 15, undertime 0, missing_checkouts 0, unscheduled_days 0)
-// at may warning sa logs.
+// at may warning sa logs. Kapag pumalya ang scheduled-absence computation, ang tahasang 'absent'
+// rows lang ang bibilangin (gaya ng dati) at may warning sa logs.
 // ============================================================
 router.get("/attendance-summary", async (req, res) => {
   try {
@@ -377,12 +443,21 @@ router.get("/attendance-summary", async (req, res) => {
       console.warn("⚠️ Late/undertime computation failed, using estimate:", err.message);
     }
 
+    // Absent dahil walang punch sa araw na may schedule. Kapag pumalya, tahasang 'absent' rows lang ang bibilangin.
+    let scheduledAbsences = null;
+    try {
+      scheduledAbsences = await computeScheduledAbsences(from, to, hasTraining);
+    } catch (err) {
+      console.warn("⚠️ Scheduled-absence computation failed, counting explicit absent rows only:", err.message);
+    }
+
     const data = rows.map((r) => {
       const calc = computed?.get(String(r.employee_id));
+      const noPunchAbsences = scheduledAbsences?.get(String(r.employee_id)) ?? 0;
       return {
         employee_id: r.employee_id,
         days_present: Number(r.days_present),
-        absences: Number(r.absences),
+        absences: Number(r.absences) + noPunchAbsences,
         lates: computed ? (calc?.lates ?? 0) : Number(r.lates),
         late_minutes: computed ? (calc?.late ?? 0) : Number(r.late_minutes),
         undertime_minutes: computed ? (calc?.under ?? 0) : Number(r.undertime_minutes),
