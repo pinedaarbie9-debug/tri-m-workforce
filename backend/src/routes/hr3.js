@@ -1,5 +1,6 @@
 // backend/src/routes/hr3.js
-// Last updated: 2026-10-18 — 10-minute grace (late_minutes at lates parehong computation),
+// Last updated: 2026-10-18 — Fixed overnight shift pre-shift timeout bug,
+//                            10-minute grace (late_minutes at lates parehong computation),
 //                            idinagdag ang missing_checkouts at unscheduled_days sa /attendance-summary,
 //                            absences ay kasama na ang araw na MAY SCHEDULE pero WALANG attendance row
 import crypto from "node:crypto";
@@ -164,25 +165,51 @@ function computeDayMinutes({ shiftStart, shiftEnd, timeIn, timeOut }) {
   let under = 0;
 
   const tin = toMinutes(timeIn);
+  const tout = toMinutes(timeOut);
+
+  // Helper: Check kung ang oras ay bago mag-umpisa ang shift
+  const isBeforeShift = (t) => (overnight ? t < s : t < s);
+
   if (tin != null) {
-    // Overnight: ang time in na pagkatapos ng hatinggabi (bago ang end) ay nasa kabilang araw na.
-    const tinAbs = overnight && tin < s && tin < e0 ? tin + 1440 : tin;
-    late = Math.max(0, tinAbs - s);
-    if (late > shiftLen) late = shiftLen;
-    if (late <= LATE_GRACE_MINUTES) late = 0;
+    // Kapag ang time-in ay bago mag-umpisa ang shift, 0 ang late (nag-early in siya)
+    if (!isBeforeShift(tin)) {
+      const tinAbs = overnight && tin < e0 ? tin + 1440 : tin;
+      late = Math.max(0, tinAbs - s);
+      if (late > shiftLen) late = shiftLen;
+      if (late <= LATE_GRACE_MINUTES) late = 0;
+    }
   }
 
-  const tout = toMinutes(timeOut);
   const singlePunch = tin != null && tout === tin; // iisang punch lang ang naitala
   if (tout != null && !singlePunch) {
     let toutAbs = tout;
+    let validTimeout = true;
+
     if (overnight) {
-      if (tout < s) toutAbs += 1440;
+      if (tout < s) {
+        // Kung nag-time out BAGO mag-umpisa ang overnight shift (e.g. 21:02 para sa 22:00 shift)
+        // Ibig sabihin, hindi niya natapos ang shift. Buong shift ang undertime.
+        // Pero, kung ang timeout ay 12 hours bago ang shift start, malamang valid ito (galing sa nakaraang araw)
+        if (tout >= (s - 720)) { 
+            toutAbs += 1440;
+        } else {
+            validTimeout = false; 
+        }
+      } else if (tout < e0) {
+        // Nag-time out sa pagitan ng start at end ng overnight shift (e.g. 23:00 para sa 22:00-06:00)
+        toutAbs += 1440; 
+      }
     } else if (tin != null && tout < tin) {
       toutAbs += 1440; // nag-time out pagkatapos ng hatinggabi
     }
-    under = Math.max(0, e - toutAbs);
-    if (under > shiftLen) under = shiftLen;
+
+    if (validTimeout) {
+      under = Math.max(0, e - toutAbs);
+      if (under > shiftLen) under = shiftLen;
+    } else {
+      // Hindi valid ang timeout (masyadong maaga), ibig sabihin buong shift ay missed.
+      under = shiftLen;
+    }
   }
 
   return { late, under };
