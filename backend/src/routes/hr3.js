@@ -71,8 +71,8 @@ function parseRange(query) {
 // ============================================================
 // GET /api/hr3/attendance-summary?from=&to=
 //
-// absences    = araw na "absent" na HINDI sakop ng approved leave at HINDI sakop ng training
-// leave_days  = bilang ng araw ng APPROVED leave sa loob ng range (hiwalay na field)
+// absences      = araw na "absent" na HINDI sakop ng approved leave at HINDI sakop ng training
+// leave_days    = bilang ng araw (calendar days) ng APPROVED leave na nag-o-overlap sa range
 // training_days = bilang ng araw na may scheduled training (galing HR3) sa loob ng range
 // ============================================================
 router.get("/attendance-summary", async (req, res) => {
@@ -119,7 +119,6 @@ router.get("/attendance-summary", async (req, res) => {
         SELECT
           a.employee_id,
           a.status,
-          a.overtime_hours,
           EXISTS (
             SELECT 1 FROM leave_requests l
             WHERE l.employee_id = a.employee_id
@@ -156,7 +155,7 @@ router.get("/attendance-summary", async (req, res) => {
         COUNT(*) FILTER (WHERE att.status = 'absent' AND NOT att.on_leave AND NOT att.in_training) AS absences,
         COUNT(*) FILTER (WHERE att.status = 'late') AS lates,
         COUNT(*) FILTER (WHERE att.status = 'late') * 15 AS late_minutes,
-        COALESCE(SUM(att.overtime_hours), 0) AS undertime_minutes, -- Simplified (dating logic), adjust if needed
+        0 AS undertime_minutes, -- TODO: kunin sa attendance (hal. expected_out - time_out) kapag alam na ang columns
         COALESCE(MAX(ls.leave_days), 0) AS leave_days,
         COALESCE(MAX(ts.training_days), 0) AS training_days
       FROM employees e
@@ -189,6 +188,7 @@ router.get("/attendance-summary", async (req, res) => {
 // ============================================================
 // GET /api/hr3/leaves?from=&to=&status=
 // Lahat ng leave na NAG-OOVERLAP sa range (hindi lang yung buong nasa loob ng range).
+// status (opsyonal, case-insensitive): pending | approved | rejected | cancelled
 // ============================================================
 router.get("/leaves", async (req, res) => {
   try {
@@ -235,6 +235,8 @@ router.get("/leaves", async (req, res) => {
 
 // ============================================================
 // GET /api/hr3/schedules?from=&to=
+// shift_start / shift_end ay "HH:mm". Overnight shift (hal. 22:00 -> 06:00):
+// ibinabalik nang ayon sa itinakda; ang `date` ay ang araw ng SIMULA ng shift.
 // ============================================================
 router.get("/schedules", async (req, res) => {
   try {
@@ -247,13 +249,13 @@ router.get("/schedules", async (req, res) => {
       SELECT
         e.employee_code AS employee_id,
         to_char(CAST(es.date AS date), 'YYYY-MM-DD') AS date,
-        s.start_time AS shift_start,
-        s.end_time AS shift_end
+        LEFT(CAST(s.start_time AS text), 5) AS shift_start,
+        LEFT(CAST(s.end_time AS text), 5) AS shift_end
       FROM employee_shifts es
       JOIN employees e ON e.id = es.employee_id
       JOIN shifts s ON s.id = es.shift_id
       WHERE es.date BETWEEN CAST(:from_date AS date) AND CAST(:to_date AS date)
-      ORDER BY es.date ASC
+      ORDER BY es.date ASC, e.employee_code ASC
       `,
       { from_date: from, to_date: to }
     );
@@ -268,8 +270,6 @@ router.get("/schedules", async (req, res) => {
 // POST /api/hr3/training-sessions
 // (Opsyonal: kung ang HR3 mismo ang mag-push ng trainings. Ang normal na daloy ay HR2 ang
 //  nagpu-pull mula sa HR3 gamit ang services/hr3Training.js.)
-// Hindi na ito nagpapalit ng attendance status; ang summary at late logic na ang gumagamit
-// ng training data.
 // ============================================================
 router.post("/training-sessions", async (req, res) => {
   try {
