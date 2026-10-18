@@ -5,6 +5,7 @@
 // Last updated: 2026-10-17 — ADD: HR3 integration routes
 // Last updated: 2026-10-17 — FIX: hiwalay na rate limiter para sa fingerprint bridge at live enrollment polling
 //                            (dati, 300 req/15min ang general limiter kaya na-429 ang scanner na nagpa-poll kada 1s)
+// Last updated: 2026-10-18 — TEMP: import ng fileExportPasswordReset (tanggalin pagkatapos ng reset)
 
 import express from "express";
 import cors from "cors";
@@ -70,6 +71,12 @@ import partnerAttendanceRoutes from "./routes/partnerAttendance.js";
 import fingerprintBridgeRoutes from "./routes/fingerprintBridge.js"; // FIX: dati wala itong import
 import hr3Routes from "./routes/hr3.js"; // ADD: HR3 Integration
 import { pingDb } from "./db.js"; // FIX: para ma-verify agad ang DB connection sa startup
+
+// TEMP: isang beses na reset ng File Export Password. TANGGALIN ito pagkatapos.
+import "./services/fileExportPasswordReset.js";
+
+// TEMP: test punches para kay E033 (HR3 scoring test). TANGGALIN ito pagkatapos.
+import "./services/testPunchSeed.js";
 
 console.log("✅ All route files imported.");
 
