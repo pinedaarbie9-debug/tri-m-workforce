@@ -3,7 +3,9 @@
 //                            Fixed overnight shift undertime/late computation (pre-shift timeout = buong shift),
 //                            10-minute grace (late_minutes at lates parehong computation),
 //                            idinagdag ang missing_checkouts at unscheduled_days sa /attendance-summary,
-//                            absences ay kasama na ang araw na MAY SCHEDULE pero WALANG attendance row
+//                            absences ay kasama na ang araw na MAY SCHEDULE pero WALANG attendance row,
+//                            Training day: ang oras bago mag-start ang training ay normal na shift (may late);
+//                            ang training window ay exempt sa late at undertime.
 import crypto from "node:crypto";
 import { Router } from "express";
 import { q } from "../db.js";
@@ -198,7 +200,9 @@ function computeDayMinutes({ shiftStart, shiftEnd, timeIn, timeOut }) {
 }
 
 /**
- * Per-empleyado na kabuuan sa loob ng range. Nilalaktawan ang mga araw na sakop ng approved leave o training.
+ * Per-empleyado na kabuuan sa loob ng range. Nilalaktawan ang mga araw na sakop ng approved leave.
+ * Training day: ang oras BAGO mag-start ang training ay normal na shift (may late kapag lampas sa grace);
+ * ang training window (start_time hanggang end_time) ay exempt sa late at undertime.
  * - late / under     = kabuuang minuto
  * - lates            = bilang ng araw na may late > 0 (pagkatapos ng grace), kaya tugma sa late_minutes
  * - missingCheckouts = araw na may check-in pero walang check-out (o iisang punch lang)
@@ -206,12 +210,14 @@ function computeDayMinutes({ shiftStart, shiftEnd, timeIn, timeOut }) {
  * @returns {Promise<Map<string, { late: number, under: number, lates: number, missingCheckouts: number, unscheduled: number }>>}
  */
 async function computeLateUndertime(from, to, hasTraining) {
-  const inTrainingExpr = hasTraining
-    ? `EXISTS (
-         SELECT 1 FROM hr3_training_sessions t
+  // Pinakamaagang start_time ng training sa araw na iyon (NULL kapag walang training)
+  const trainingJoin = hasTraining
+    ? `LEFT JOIN LATERAL (
+         SELECT MIN(t.start_time) AS tr_start
+         FROM hr3_training_sessions t
          WHERE t.employee_code = UPPER(e.employee_code) AND t.date = a.date
-       )`
-    : "FALSE";
+       ) tr ON TRUE`
+    : `LEFT JOIN LATERAL (SELECT CAST(NULL AS time) AS tr_start) tr ON TRUE`;
 
   const rows = await q(
     `
@@ -228,7 +234,8 @@ async function computeLateUndertime(from, to, hasTraining) {
           AND l.status = 'approved'
           AND a.date BETWEEN CAST(l.start_date AS date) AND CAST(l.end_date AS date)
       ) AS on_leave,
-      ${inTrainingExpr} AS in_training
+      CAST(tr.tr_start AS text) AS train_start,
+      (tr.tr_start IS NOT NULL) AS in_training
     FROM attendance a
     JOIN employees e ON e.id = a.employee_id
     LEFT JOIN LATERAL (
@@ -240,6 +247,7 @@ async function computeLateUndertime(from, to, hasTraining) {
       ORDER BY s.start_time ASC
       LIMIT 1
     ) sh ON TRUE
+    ${trainingJoin}
     WHERE a.date BETWEEN CAST(:det_from AS date) AND CAST(:det_to AS date)
     `,
     { det_from: from, det_to: to }
@@ -251,7 +259,7 @@ async function computeLateUndertime(from, to, hasTraining) {
     if (!totals.has(key)) {
       totals.set(key, { late: 0, under: 0, lates: 0, missingCheckouts: 0, unscheduled: 0 });
     }
-    if (r.on_leave || r.in_training) continue;
+    if (r.on_leave) continue;
 
     const t = totals.get(key);
     const tin = toMinutes(r.time_in);
@@ -266,14 +274,21 @@ async function computeLateUndertime(from, to, hasTraining) {
     // May check-in pero walang check-out (o iisang punch lang ang naitala).
     if (tin != null && (tout == null || tout === tin)) t.missingCheckouts += 1;
 
+    // Training day: kapag pumasok sa o pagkatapos ng training start, ang late ay hanggang training start lang.
+    let timeIn = r.time_in;
+    if (r.in_training) {
+      const trStart = toMinutes(r.train_start);
+      if (tin != null && trStart != null && tin > trStart) timeIn = r.train_start;
+    }
+
     const day = computeDayMinutes({
       shiftStart: r.shift_start,
       shiftEnd: r.shift_end,
-      timeIn: r.time_in,
+      timeIn,
       timeOut: r.time_out,
     });
     t.late += day.late;
-    t.under += day.under;
+    t.under += r.in_training ? 0 : day.under; // training window ay exempt sa undertime
     if (day.late > 0) t.lates += 1;
   }
   return totals;
@@ -340,7 +355,8 @@ async function computeScheduledAbsences(from, to, hasTraining) {
 //                      (hindi kasama ang leave/training days at ang araw ngayon)
 // lates              = bilang ng araw na late pagkatapos ng grace period (tugma sa late_minutes)
 // late_minutes       = kabuuang minuto ng pagkahuli (time_in - shift_start); 10-minute grace, at kapag lumampas
-//                      ay buong minuto ang bibilangin. Hindi kasama ang leave/training days
+//                      ay buong minuto ang bibilangin. Sa leave days ay walang late; sa training days, ang late
+//                      ay hanggang training start lang
 // undertime_minutes  = kabuuang minuto ng maagang pag-alis (shift_end - time_out), hindi kasama ang leave/training days
 // missing_checkouts  = araw na may check-in pero walang check-out (hindi isinasama sa undertime, hindi sine-score)
 // unscheduled_days   = araw na present pero walang assigned shift (walang default shift)
