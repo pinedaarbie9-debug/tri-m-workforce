@@ -1,5 +1,6 @@
 // backend/src/routes/hr3.js
-// Last updated: 2026-10-18 — Fixed overnight shift undertime/late computation (pre-shift timeout = buong shift),
+// Last updated: 2026-10-19 — days_present ay binibilang na ang status 'present' AT 'late' (dati 'present' lang),
+//                            Fixed overnight shift undertime/late computation (pre-shift timeout = buong shift),
 //                            10-minute grace (late_minutes at lates parehong computation),
 //                            idinagdag ang missing_checkouts at unscheduled_days sa /attendance-summary,
 //                            absences ay kasama na ang araw na MAY SCHEDULE pero WALANG attendance row
@@ -333,6 +334,7 @@ async function computeScheduledAbsences(from, to, hasTraining) {
 // ============================================================
 // GET /api/hr3/attendance-summary?from=&to=
 //
+// days_present       = bilang ng araw na may attendance na status 'present' o 'late' (ang late ay nagtrabaho pa rin)
 // absences           = araw na "absent" na HINDI sakop ng approved leave at HINDI sakop ng training,
 //                      PLUS ang araw na may schedule (employee_shifts) pero walang attendance row at lumipas na
 //                      (hindi kasama ang leave/training days at ang araw ngayon)
@@ -426,7 +428,7 @@ router.get("/attendance-summary", async (req, res) => {
       )
       SELECT
         e.employee_code AS employee_id,
-        COUNT(*) FILTER (WHERE att.status = 'present') AS days_present,
+        COUNT(*) FILTER (WHERE att.status IN ('present', 'late')) AS days_present,
         COUNT(*) FILTER (WHERE att.status = 'absent' AND NOT att.on_leave AND NOT att.in_training) AS absences,
         COUNT(*) FILTER (WHERE att.status = 'late') AS lates,
         COUNT(*) FILTER (WHERE att.status = 'late') * 15 AS late_minutes,
