@@ -134,11 +134,16 @@ router.delete("/:id/permanent", requireRole(...ROLE_GROUPS.ADMIN_ONLY), async (r
 });
 
 // ===== CRUD =====
-// Naka-sort ayon sa employee_code (E001, E002, E003, ...) para nasa taas ang pinakaunang ID.
+// Naka-sort ayon sa numero ng employee_code (E001, E002, ... E075) para nasa taas ang pinakaunang ID.
+// Numeric ang sort kaya tama kahit walang zero-padding (E2 bago E10). Ang code na walang numero ay nasa dulo.
 router.get("/", requireRole(...ROLE_GROUPS.EMPLOYEE_MANAGERS), async (req, res) => {
   try {
     const rows = await q(
-      `${SELECT_EMPLOYEE} WHERE e.deleted_at IS NULL ORDER BY e.employee_code ASC, e.created_at ASC`
+      `${SELECT_EMPLOYEE}
+       WHERE e.deleted_at IS NULL
+       ORDER BY NULLIF(regexp_replace(e.employee_code, '\\D', '', 'g'), '')::bigint ASC NULLS LAST,
+                e.employee_code ASC,
+                e.created_at ASC`
     );
     return res.json(rows.map(withDept));
   } catch (err) {

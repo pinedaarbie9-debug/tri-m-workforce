@@ -35,6 +35,10 @@ function getDeptName(emp: Employee): string {
 
 const POLL_MS = 20000;
 
+// Pinakaunang ID muna (E001, E002, ...). Numeric ang pagkukumpara kaya tama rin ang E2 bago E10.
+const byEmployeeCode = (a: Employee, b: Employee) =>
+  (a.employee_code ?? "").localeCompare(b.employee_code ?? "", undefined, { numeric: true, sensitivity: "base" });
+
 const emptyForm = {
   employee_code: "",
   first_name: "",
@@ -78,7 +82,7 @@ export function EmployeesPage() {
     setError(null);
     try {
       const [data, depts] = await Promise.all([api.getEmployees(), api.getDepartments()]);
-      setEmployees(data);
+      setEmployees([...data].sort(byEmployeeCode));
       setDepartments(depts);
     } catch (err: any) {
       console.error("Failed to fetch employees:", err);
