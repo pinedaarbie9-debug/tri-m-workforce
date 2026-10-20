@@ -421,6 +421,52 @@ router.patch("/:id/status", requireRole(...ROLE_GROUPS.APPROVERS), async (req, r
   }
 });
 
+// PATCH /leave-requests/:id/cancel — APPROVERS
+// Para sa pending o approved na leave. Hindi binubura ang row; status lang ang nagiging 'cancelled'.
+// Hindi nito ipinapaalam sa HR1 (kahit may reference_id).
+router.patch("/:id/cancel", requireRole(...ROLE_GROUPS.APPROVERS), async (req, res) => {
+  try {
+    const rows = await q(
+      `SELECT employee_id, leave_type, start_date, end_date, status
+       FROM leave_requests WHERE id = :id`,
+      { id: req.params.id }
+    );
+    const leave = rows[0];
+    if (!leave) return res.status(404).json({ error: "Leave request not found." });
+
+    if (!["pending", "approved"].includes(leave.status)) {
+      return res.status(409).json({
+        error: `Only pending or approved requests can be cancelled. Current status: ${leave.status}.`,
+      });
+    }
+
+    await q(
+      `UPDATE leave_requests SET status = 'cancelled', updated_at = NOW() WHERE id = :id`,
+      { id: req.params.id }
+    );
+
+    await logAudit({
+      userId: req.user.id,
+      action: "update",
+      module: "leave_requests",
+      recordId: req.params.id,
+      oldValues: { status: leave.status },
+      newValues: { status: "cancelled" },
+      ip: req.ip,
+    });
+
+    await notifyEmployeeOwner(leave.employee_id, {
+      type: "leave_request",
+      title: "Leave Request Cancelled",
+      message: `Your ${leave.leave_type} leave request (${leave.start_date} to ${leave.end_date}) was cancelled.`,
+    });
+
+    return res.json({ ok: true, previous_status: leave.status });
+  } catch (err) {
+    return safeError(res, err, "Failed to cancel leave request.");
+  }
+});
+
 // POST /leave-requests/:id/resend-hr1 — APPROVERS
 // Ulitin ang pagpapadala ng approve/reject sa HR1 kung pumalya noong una.
 router.post("/:id/resend-hr1", requireRole(...ROLE_GROUPS.APPROVERS), async (req, res) => {

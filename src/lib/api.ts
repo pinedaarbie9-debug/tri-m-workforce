@@ -358,26 +358,18 @@ export const api = {
       method: "POST",
       body: JSON.stringify(data),
     }),
+  // Ang backend na ang nagpapadala ng approve/reject sa HR1 (kapag may reference_id).
+  // Huwag maglagay ng API key ng partner dito sa frontend; makikita ito ng sinumang magbukas ng site.
   updateLeaveStatus: (id: string, status: "approved" | "rejected") =>
     request<{ ok: true }>(`/leave-requests/${id}/status`, {
       method: "PATCH",
       body: JSON.stringify({ status }),
     }),
-  // 🆕 Idagdag ito para sa webhook papuntang HR1
-  updateLeaveStatusWebhook: (data: {
-    reference_id: string;
-    status: "approved" | "rejected";
-    rejection_reason: string | null;
-  }) =>
-    request<{ success: boolean; message: string; hr1_response?: any }>(
-      "/partner/leave-status-update",
-      {
-        method: "POST",
-        headers: {
-          "x-api-key": "11d8c75fad83799f24bc7d8fd42789ce9b65d8d51bf82cc1845b11c94fb3fab0",
-        },
-        body: JSON.stringify(data),
-      }
+  // Cancel ng pending o approved na leave (status lang ang nagbabago, hindi binubura)
+  cancelLeaveRequest: (id: string) =>
+    request<{ ok: true; previous_status?: string }>(
+      `/leave-requests/${id}/cancel`,
+      { method: "PATCH" }
     ),
   getLeaveAttachment: (id: string) =>
     request<{ data: string; name: string; type: string; size: number }>(

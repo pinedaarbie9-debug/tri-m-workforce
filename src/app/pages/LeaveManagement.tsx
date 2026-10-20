@@ -2,7 +2,7 @@
 import { useState, useEffect, useCallback } from "react";
 import {
   Search, Plus, CheckCircle2, XCircle, Clock, Filter,
-  ChevronLeft, ChevronRight, Loader2, X, FileText, Download,
+  ChevronLeft, ChevronRight, Loader2, X, FileText, Download, Ban, AlertTriangle,
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { api } from "../../lib/api";
@@ -37,6 +37,86 @@ interface AttachmentData {
 const MAX_FILE_SIZE = 5 * 1024 * 1024;
 const ALLOWED_TYPES = ["application/pdf", "image/jpeg", "image/jpg", "image/png", "image/webp"];
 
+const TH = "text-left px-4 sm:px-5 py-4 text-sm font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap";
+
+// ============================================================
+// Confirm Cancel Modal
+// ============================================================
+function CancelLeaveModal({
+  leave,
+  empName,
+  busy,
+  onClose,
+  onConfirm,
+}: {
+  leave: LeaveRequest;
+  empName: string;
+  busy: boolean;
+  onClose: () => void;
+  onConfirm: () => void;
+}) {
+  const wasApproved = leave.status === "approved";
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={busy ? undefined : onClose}>
+      <motion.div
+        initial={{ opacity: 0, scale: 0.95, y: 10 }}
+        animate={{ opacity: 1, scale: 1, y: 0 }}
+        exit={{ opacity: 0, scale: 0.95, y: 10 }}
+        onClick={(e) => e.stopPropagation()}
+        className="w-full max-w-md bg-card rounded-2xl shadow-xl border border-border overflow-hidden"
+      >
+        <div className="p-6 space-y-4">
+          <div className="flex items-start gap-3">
+            <div className="w-10 h-10 rounded-full bg-red-100 flex items-center justify-center shrink-0">
+              <AlertTriangle className="w-5 h-5 text-red-600" />
+            </div>
+            <div className="min-w-0">
+              <h2 className="text-lg font-semibold text-foreground">Cancel this leave?</h2>
+              <p className="text-sm text-muted-foreground mt-1">
+                <span className="font-medium text-foreground">{empName}</span>
+                {" · "}
+                {leaveLabel(leave.leave_type)}
+                <br />
+                {leave.start_date} → {leave.end_date} ({leave.days_count}d)
+              </p>
+            </div>
+          </div>
+
+          {wasApproved && (
+            <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg text-sm text-amber-800">
+              Approved na ang leave na ito. Kapag na-cancel, hindi na ito sakop ng leave exemption, kaya mabibilang
+              nang muli ang late, undertime at absences sa mga araw na iyon.
+            </div>
+          )}
+
+          <div className="flex flex-col-reverse sm:flex-row justify-end gap-2 pt-2">
+            <button
+              type="button"
+              onClick={onClose}
+              disabled={busy}
+              className="px-4 py-2.5 text-sm rounded-xl border border-border hover:bg-muted/50 transition-colors disabled:opacity-60"
+            >
+              Keep leave
+            </button>
+            <button
+              type="button"
+              onClick={onConfirm}
+              disabled={busy}
+              className="flex items-center justify-center gap-2 px-4 py-2.5 text-sm bg-red-600 text-white rounded-xl hover:bg-red-700 transition-colors disabled:opacity-60"
+            >
+              {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Ban className="w-4 h-4" />}
+              {busy ? "Cancelling..." : "Yes, cancel leave"}
+            </button>
+          </div>
+        </div>
+      </motion.div>
+    </div>
+  );
+}
+
+// ============================================================
+// New Leave Request Modal
+// ============================================================
 function NewLeaveRequestModal({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {
   const [employees, setEmployees] = useState<any[]>([]);
   const [loadingEmployees, setLoadingEmployees] = useState(true);
@@ -131,81 +211,81 @@ function NewLeaveRequestModal({ onClose, onCreated }: { onClose: () => void; onC
         className="w-full max-w-md bg-card rounded-2xl shadow-xl border border-border overflow-hidden max-h-[90vh] overflow-y-auto"
       >
         <div className="flex items-center justify-between px-5 py-4 border-b border-border sticky top-0 bg-card z-10">
-          <h2 className="font-semibold text-foreground">New Leave Request</h2>
-          <button onClick={onClose} className="w-7 h-7 rounded-full flex items-center justify-center hover:bg-muted transition-colors">
+          <h2 className="text-lg font-semibold text-foreground">New Leave Request</h2>
+          <button onClick={onClose} className="w-8 h-8 rounded-full flex items-center justify-center hover:bg-muted transition-colors">
             <X className="w-4 h-4" />
           </button>
         </div>
         <form onSubmit={handleSubmit} className="p-5 space-y-4">
-          {formError && <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700">{formError}</div>}
+          {formError && <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">{formError}</div>}
           <div>
-            <label className="text-xs font-medium text-muted-foreground">
-              Employee <span className="text-destructive">*</span> <span className="text-muted-foreground/60">(Active only — eligibility is checked on submit)</span>
+            <label className="text-sm font-medium text-muted-foreground">
+              Employee <span className="text-destructive">*</span> <span className="text-muted-foreground/60 text-xs">(Active only — eligibility is checked on submit)</span>
             </label>
             <select value={employeeId} onChange={(e) => setEmployeeId(e.target.value)} disabled={loadingEmployees || noEligible} required
-              className="mt-1 w-full px-3 py-2 text-sm bg-background border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/20 disabled:opacity-60">
+              className="mt-1 w-full px-3 py-2.5 text-sm bg-background border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/20 disabled:opacity-60">
               <option value="">{loadingEmployees ? "Loading..." : noEligible ? "No eligible employees" : "Select employee"}</option>
-              {employees.map((emp) => (<option key={emp.id} value={emp.id}>{emp.full_name}</option>))}
+              {employees.map((emp) => (<option key={emp.id} value={emp.id}>{emp.employee_code} — {emp.full_name}</option>))}
             </select>
-            {noEligible && <p className="text-[10px] text-amber-600 mt-1">Walang active na employees na pwedeng i-file ng leave.</p>}
+            {noEligible && <p className="text-xs text-amber-600 mt-1">Walang active na employees na pwedeng i-file ng leave.</p>}
           </div>
           <div>
-            <label className="text-xs font-medium text-muted-foreground">Leave Type <span className="text-destructive">*</span></label>
+            <label className="text-sm font-medium text-muted-foreground">Leave Type <span className="text-destructive">*</span></label>
             <select value={leaveType} onChange={(e) => setLeaveType(e.target.value as LeaveType)} required
-              className="mt-1 w-full px-3 py-2 text-sm bg-background border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/20">
+              className="mt-1 w-full px-3 py-2.5 text-sm bg-background border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/20">
               {LEAVE_TYPE_OPTIONS.map((t) => (<option key={t} value={t}>{LEAVE_TYPE_LABELS[t]}</option>))}
             </select>
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="text-xs font-medium text-muted-foreground">Start Date <span className="text-destructive">*</span></label>
+              <label className="text-sm font-medium text-muted-foreground">Start Date <span className="text-destructive">*</span></label>
               <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} required
-                className="mt-1 w-full px-3 py-2 text-sm bg-background border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/20" />
+                className="mt-1 w-full px-3 py-2.5 text-sm bg-background border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/20" />
             </div>
             <div>
-              <label className="text-xs font-medium text-muted-foreground">End Date <span className="text-destructive">*</span></label>
+              <label className="text-sm font-medium text-muted-foreground">End Date <span className="text-destructive">*</span></label>
               <input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} required
-                className="mt-1 w-full px-3 py-2 text-sm bg-background border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/20" />
+                className="mt-1 w-full px-3 py-2.5 text-sm bg-background border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/20" />
             </div>
           </div>
           <div>
-            <label className="text-xs font-medium text-muted-foreground">Reason <span className="text-destructive">*</span></label>
+            <label className="text-sm font-medium text-muted-foreground">Reason <span className="text-destructive">*</span></label>
             <textarea value={reason} onChange={(e) => setReason(e.target.value)} rows={3} required minLength={10} maxLength={500}
-              className="mt-1 w-full px-3 py-2 text-sm bg-background border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/20 resize-none"
+              className="mt-1 w-full px-3 py-2.5 text-sm bg-background border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/20 resize-none"
               placeholder="Ilagay ang dahilan ng leave (minimum 10 characters)..." />
-            <p className="text-[10px] text-muted-foreground mt-1">{reason.length}/500 characters (minimum 10)</p>
+            <p className="text-xs text-muted-foreground mt-1">{reason.length}/500 characters (minimum 10)</p>
           </div>
           <div>
-            <label className="text-xs font-medium text-muted-foreground">Attachment (Proof) <span className="text-destructive">*</span></label>
+            <label className="text-sm font-medium text-muted-foreground">Attachment (Proof) <span className="text-destructive">*</span></label>
             {!attachment ? (
               <div className="mt-1">
                 <input id="leave-attachment" type="file" accept=".pdf,.jpg,.jpeg,.png,.webp" onChange={handleFileChange} required
                   className="w-full px-3 py-2 text-sm bg-background border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/20 file:mr-3 file:py-1 file:px-3 file:rounded file:border-0 file:text-xs file:font-medium file:bg-primary file:text-white hover:file:bg-primary/90 file:cursor-pointer" />
-                <p className="text-[10px] text-muted-foreground mt-1">PDF, JPG, PNG, WebP — max 5MB <span className="text-destructive">*Required</span></p>
+                <p className="text-xs text-muted-foreground mt-1">PDF, JPG, PNG, WebP — max 5MB <span className="text-destructive">*Required</span></p>
               </div>
             ) : (
               <div className="mt-1 flex items-center justify-between gap-2 p-2.5 bg-muted/30 border border-border rounded-lg">
                 <div className="flex items-center gap-2 min-w-0">
-                  <div className="w-8 h-8 rounded bg-primary/10 flex items-center justify-center shrink-0">
+                  <div className="w-9 h-9 rounded bg-primary/10 flex items-center justify-center shrink-0">
                     <span className="text-[10px] font-bold text-primary uppercase">{attachment.name.split(".").pop()?.slice(0, 4) ?? "FILE"}</span>
                   </div>
                   <div className="min-w-0">
-                    <p className="text-xs font-medium truncate">{attachment.name}</p>
-                    <p className="text-[10px] text-muted-foreground">{(attachment.size / 1024).toFixed(1)} KB</p>
+                    <p className="text-sm font-medium truncate">{attachment.name}</p>
+                    <p className="text-xs text-muted-foreground">{(attachment.size / 1024).toFixed(1)} KB</p>
                   </div>
                 </div>
                 <button type="button" onClick={handleRemoveAttachment}
-                  className="w-6 h-6 rounded-full bg-red-100 hover:bg-red-200 flex items-center justify-center shrink-0 transition-colors" title="Remove attachment">
-                  <X className="w-3 h-3 text-red-600" />
+                  className="w-7 h-7 rounded-full bg-red-100 hover:bg-red-200 flex items-center justify-center shrink-0 transition-colors" title="Remove attachment">
+                  <X className="w-3.5 h-3.5 text-red-600" />
                 </button>
               </div>
             )}
           </div>
           <div className="flex flex-col sm:flex-row justify-end gap-2 pt-2">
-            <button type="button" onClick={onClose} className="px-4 py-2 text-sm rounded-xl border border-border hover:bg-muted/50 transition-colors">Cancel</button>
+            <button type="button" onClick={onClose} className="px-4 py-2.5 text-sm rounded-xl border border-border hover:bg-muted/50 transition-colors">Cancel</button>
             <button type="submit" disabled={submitting || noEligible}
-              className="flex items-center justify-center gap-2 px-4 py-2 text-sm bg-primary text-white rounded-xl hover:bg-primary/90 transition-colors disabled:opacity-60">
-              {submitting && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+              className="flex items-center justify-center gap-2 px-4 py-2.5 text-sm bg-primary text-white rounded-xl hover:bg-primary/90 transition-colors disabled:opacity-60">
+              {submitting && <Loader2 className="w-4 h-4 animate-spin" />}
               Submit Request
             </button>
           </div>
@@ -215,17 +295,25 @@ function NewLeaveRequestModal({ onClose, onCreated }: { onClose: () => void; onC
   );
 }
 
+// ============================================================
+// Page
+// ============================================================
 export function LeaveManagementPage() {
   const [leaves, setLeaves] = useState<LeaveRequest[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
 
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<LeaveStatus | "all">("all");
   const [page, setPage] = useState(1);
-  const perPage = 5;
+  const perPage = 10;
 
   const [showNewRequestModal, setShowNewRequestModal] = useState(false);
+
+  // Cancel flow
+  const [cancelTarget, setCancelTarget] = useState<LeaveRequest | null>(null);
+  const [cancelling, setCancelling] = useState(false);
 
   // 🔒 Password prompt — DOWNLOAD lang
   const [showPasswordPrompt, setShowPasswordPrompt] = useState(false);
@@ -245,56 +333,45 @@ export function LeaveManagementPage() {
     }
   }, []);
 
-  // 🔒 Approve — MAY WEBHOOK NA PABALIK SA HR1
+  // Approve — ang backend na ang nagpapadala ng resulta sa HR1 kapag may reference_id
   async function handleApprove(leave: LeaveRequest) {
+    setActionError(null);
     try {
-      // 1. Update sa HR2 DB (local)
       await api.updateLeaveStatus(leave.id, "approved");
-      
-      // 2. Send pabalik kay HR1 via webhook (kung may reference_id)
-      if ((leave as any).reference_id) {
-        try {
-          await api.updateLeaveStatusWebhook({
-            reference_id: (leave as any).reference_id,
-            status: "approved",
-            rejection_reason: null
-          });
-          console.log("✅ HR1 notified of approval.");
-        } catch (err) {
-          console.error("❌ Failed to notify HR1:", err);
-          // Hindi natin i-block ang UI kung mag-fail ang webhook
-        }
-      }
-      
       fetchLeaves(false);
-    } catch (err) {
+    } catch (err: any) {
       console.error("Failed to approve leave:", err);
+      setActionError(err.message ?? "Failed to approve leave.");
     }
   }
 
-  // 🔒 Reject — MAY WEBHOOK NA PABALIK SA HR1
+  // Reject — ang backend na ang nagpapadala ng resulta sa HR1 kapag may reference_id
   async function handleReject(leave: LeaveRequest) {
+    setActionError(null);
     try {
-      // 1. Update sa HR2 DB (local)
       await api.updateLeaveStatus(leave.id, "rejected");
-      
-      // 2. Send pabalik kay HR1 via webhook (kung may reference_id)
-      if ((leave as any).reference_id) {
-        try {
-          await api.updateLeaveStatusWebhook({
-            reference_id: (leave as any).reference_id,
-            status: "rejected",
-            rejection_reason: "Rejected by HR2" // Pwede mong palitan ng modal para sa reason
-          });
-          console.log("✅ HR1 notified of rejection.");
-        } catch (err) {
-          console.error("❌ Failed to notify HR1:", err);
-        }
-      }
-      
       fetchLeaves(false);
-    } catch (err) {
+    } catch (err: any) {
       console.error("Failed to reject leave:", err);
+      setActionError(err.message ?? "Failed to reject leave.");
+    }
+  }
+
+  // Cancel — para sa Pending o Approved na leave
+  async function handleConfirmCancel() {
+    if (!cancelTarget) return;
+    setCancelling(true);
+    setActionError(null);
+    try {
+      await api.cancelLeaveRequest(cancelTarget.id);
+      setCancelTarget(null);
+      fetchLeaves(false);
+    } catch (err: any) {
+      console.error("Failed to cancel leave:", err);
+      setActionError(err.message ?? "Failed to cancel leave.");
+      setCancelTarget(null);
+    } finally {
+      setCancelling(false);
     }
   }
 
@@ -335,10 +412,14 @@ export function LeaveManagementPage() {
   }, [fetchLeaves]);
 
   const getEmpName = (l: any) => l.employee?.full_name ?? "Unknown";
-  const getDeptName = (l: any) => l.employee?.department?.name ?? "—";
+  const getEmpCode = (l: any) => l.employee?.employee_code ?? "";
 
   const filtered = leaves.filter((l) => {
-    const matchSearch = !search || getEmpName(l).toLowerCase().includes(search.toLowerCase());
+    const q = search.toLowerCase();
+    const matchSearch =
+      !search ||
+      getEmpName(l).toLowerCase().includes(q) ||
+      getEmpCode(l).toLowerCase().includes(q);
     const matchStatus = statusFilter === "all" || l.status === statusFilter;
     return matchSearch && matchStatus;
   });
@@ -355,21 +436,21 @@ export function LeaveManagementPage() {
   return (
     <div className="p-4 sm:p-6 space-y-4 sm:space-y-6">
       <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }}
-        className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-primary via-violet-600 to-indigo-700 p-5 sm:p-6 text-white shadow-lg">
+        className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-primary via-violet-600 to-indigo-700 p-5 sm:p-7 text-white shadow-lg">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
           <div className="min-w-0">
-            <h1 className="text-xl sm:text-2xl font-bold">Leave Management</h1>
-            <p className="text-white/70 text-xs sm:text-sm mt-1">Review and manage employee leave requests</p>
+            <h1 className="text-2xl sm:text-3xl font-bold">Leave Management</h1>
+            <p className="text-white/70 text-sm sm:text-base mt-1">Review and manage employee leave requests</p>
           </div>
-          <div className="grid grid-cols-2 sm:flex gap-2 sm:gap-3 shrink-0">
+          <div className="grid grid-cols-3 gap-2 sm:gap-3 shrink-0">
             {[
               { label: "Pending", value: summary.pending, color: "bg-amber-400/20 border-amber-400/30" },
               { label: "Approved", value: summary.approved, color: "bg-emerald-400/20 border-emerald-400/30" },
               { label: "Total Days Off", value: summary.total_days, color: "bg-white/10 border-white/20" },
             ].map((s) => (
-              <div key={s.label} className={`${s.color} rounded-xl px-3 py-2 sm:px-4 border text-center`}>
-                <p className="text-white/60 text-[10px] sm:text-xs">{s.label}</p>
-                <p className="text-white font-bold text-lg sm:text-xl">{s.value}</p>
+              <div key={s.label} className={`${s.color} rounded-xl px-3 py-2.5 sm:px-5 border text-center`}>
+                <p className="text-white/70 text-xs sm:text-sm">{s.label}</p>
+                <p className="text-white font-bold text-xl sm:text-2xl">{s.value}</p>
               </div>
             ))}
           </div>
@@ -378,27 +459,35 @@ export function LeaveManagementPage() {
 
       <div className="flex flex-col gap-3">
         <div className="relative w-full">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-          <input value={search} onChange={(e) => { setSearch(e.target.value); setPage(1); }} placeholder="Search employees..."
-            className="w-full pl-9 pr-4 py-2.5 text-sm bg-card border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40" />
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground" />
+          <input value={search} onChange={(e) => { setSearch(e.target.value); setPage(1); }} placeholder="Search name or employee ID..."
+            className="w-full pl-10 pr-4 py-3 text-base bg-card border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40" />
         </div>
         <div className="grid grid-cols-2 sm:flex gap-2 sm:gap-3">
           <select value={statusFilter} onChange={(e) => { setStatusFilter(e.target.value as LeaveStatus | "all"); setPage(1); }}
-            className="col-span-2 sm:col-span-1 px-3 py-2.5 text-sm bg-card border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary/20">
+            className="col-span-2 sm:col-span-1 px-3 py-3 text-base bg-card border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary/20">
             <option value="all">All Status</option>
             <option value="pending">Pending</option>
             <option value="approved">Approved</option>
             <option value="rejected">Rejected</option>
+            <option value="cancelled">Cancelled</option>
           </select>
-          <button className="flex items-center justify-center gap-2 px-3 sm:px-4 py-2.5 text-sm border border-border rounded-xl bg-card hover:bg-muted/50 transition-colors">
+          <button className="flex items-center justify-center gap-2 px-3 sm:px-4 py-3 text-base border border-border rounded-xl bg-card hover:bg-muted/50 transition-colors">
             <Filter className="w-4 h-4" /> <span className="hidden sm:inline">Filter</span>
           </button>
           <button onClick={handleNewRequestClick}
-            className="col-span-2 sm:col-span-1 flex items-center justify-center gap-2 px-4 py-2.5 text-sm bg-primary text-white rounded-xl hover:bg-primary/90 transition-colors">
-            <Plus className="w-4 h-4" /> New Request
+            className="col-span-2 sm:col-span-1 flex items-center justify-center gap-2 px-5 py-3 text-base bg-primary text-white rounded-xl hover:bg-primary/90 transition-colors">
+            <Plus className="w-5 h-5" /> New Request
           </button>
         </div>
       </div>
+
+      {actionError && (
+        <div className="flex items-start justify-between gap-3 p-3 bg-red-50 border border-red-200 rounded-xl text-sm text-red-700">
+          <span>{actionError}</span>
+          <button onClick={() => setActionError(null)} className="shrink-0 hover:text-red-900"><X className="w-4 h-4" /></button>
+        </div>
+      )}
 
       {loading && (
         <div className="flex items-center justify-center py-16 text-muted-foreground">
@@ -412,75 +501,84 @@ export function LeaveManagementPage() {
       {!loading && !error && (
         <div className="bg-card rounded-2xl shadow-sm border border-border overflow-hidden">
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[900px]">
+            <table className="w-full min-w-[1100px]">
               <thead>
                 <tr className="border-b border-border bg-muted/30">
-                  <th className="text-left px-4 sm:px-5 py-3.5 text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap">Employee</th>
-                  <th className="text-left px-4 sm:px-5 py-3.5 text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap">Leave Type</th>
-                  <th className="text-left px-4 sm:px-5 py-3.5 text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap">Duration</th>
-                  <th className="text-left px-4 sm:px-5 py-3.5 text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap">Days</th>
-                  <th className="text-left px-4 sm:px-5 py-3.5 text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap">Reason</th>
-                  <th className="text-left px-4 sm:px-5 py-3.5 text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap">Proof</th>
-                  <th className="text-left px-4 sm:px-5 py-3.5 text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap">Applied On</th>
-                  <th className="text-left px-4 sm:px-5 py-3.5 text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap">Status</th>
-                  <th className="px-4 sm:px-5 py-3.5" />
+                  <th className={TH}>Employee</th>
+                  <th className={TH}>Leave Type</th>
+                  <th className={TH}>Duration</th>
+                  <th className={TH}>Days</th>
+                  <th className={TH}>Reason</th>
+                  <th className={TH}>Proof</th>
+                  <th className={TH}>Applied On</th>
+                  <th className={TH}>Status</th>
+                  <th className={TH}>Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-border">
                 {paginated.length === 0 && (
-                  <tr><td colSpan={9} className="px-5 py-10 text-center text-sm text-muted-foreground">No leave requests found.</td></tr>
+                  <tr><td colSpan={9} className="px-5 py-12 text-center text-base text-muted-foreground">No leave requests found.</td></tr>
                 )}
                 {paginated.map((leave) => {
                   const cfg = statusConfig[leave.status];
                   const Icon = cfg.icon;
                   const empName = getEmpName(leave);
+                  const empCode = getEmpCode(leave);
                   return (
                     <tr key={leave.id} className="hover:bg-muted/20 transition-colors">
-                      <td className="px-4 sm:px-5 py-4">
+                      <td className="px-4 sm:px-5 py-5">
                         <div className="flex items-center gap-3">
-                          <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center text-primary font-semibold text-xs shrink-0">
-                            {empName.split(" ").map((n: string) => n[0]).join("")}
+                          <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center text-primary font-semibold text-sm shrink-0">
+                            {empName.split(" ").map((n: string) => n[0]).join("").slice(0, 3)}
                           </div>
                           <div className="min-w-0">
-                            <p className="text-sm font-medium text-foreground whitespace-nowrap">{empName}</p>
-                            <p className="text-xs text-muted-foreground whitespace-nowrap">{getDeptName(leave)}</p>
+                            <p className="text-base font-medium text-foreground whitespace-nowrap">{empName}</p>
+                            <p className="text-sm text-muted-foreground whitespace-nowrap">{empCode || "—"}</p>
                           </div>
                         </div>
                       </td>
-                      <td className="px-4 sm:px-5 py-4">
-                        <span className={`px-2 py-0.5 rounded-full text-xs font-medium whitespace-nowrap ${LEAVE_TYPE_COLORS[leave.leave_type] ?? "bg-gray-100 text-gray-600"}`}>
+                      <td className="px-4 sm:px-5 py-5">
+                        <span className={`px-3 py-1 rounded-full text-sm font-medium whitespace-nowrap ${LEAVE_TYPE_COLORS[leave.leave_type] ?? "bg-gray-100 text-gray-600"}`}>
                           {leaveLabel(leave.leave_type)}
                         </span>
                       </td>
-                      <td className="px-4 sm:px-5 py-4 text-sm text-muted-foreground whitespace-nowrap">{leave.start_date} → {leave.end_date}</td>
-                      <td className="px-4 sm:px-5 py-4 text-sm font-semibold text-foreground whitespace-nowrap">{leave.days_count}d</td>
-                      <td className="px-4 sm:px-5 py-4 text-sm text-muted-foreground max-w-[160px] truncate" title={leave.reason ?? ""}>{leave.reason ?? "—"}</td>
-                      <td className="px-4 sm:px-5 py-4">
+                      <td className="px-4 sm:px-5 py-5 text-base text-muted-foreground whitespace-nowrap">{leave.start_date} → {leave.end_date}</td>
+                      <td className="px-4 sm:px-5 py-5 text-base font-semibold text-foreground whitespace-nowrap">{leave.days_count}d</td>
+                      <td className="px-4 sm:px-5 py-5 text-base text-muted-foreground max-w-[220px] truncate" title={leave.reason ?? ""}>{leave.reason ?? "—"}</td>
+                      <td className="px-4 sm:px-5 py-5">
                         {(leave as any).attachment_name ? (
                           <button onClick={() => handleDownloadAttachment(leave.id, (leave as any).attachment_name)}
-                            className="flex items-center gap-1 text-xs text-primary hover:underline whitespace-nowrap" title={(leave as any).attachment_name}>
-                            <FileText className="w-3 h-3" />
-                            <Download className="w-3 h-3" />
-                            <span className="max-w-[100px] truncate">{(leave as any).attachment_name}</span>
+                            className="flex items-center gap-1.5 text-sm text-primary hover:underline whitespace-nowrap" title={(leave as any).attachment_name}>
+                            <FileText className="w-4 h-4" />
+                            <Download className="w-4 h-4" />
+                            <span className="max-w-[110px] truncate">{(leave as any).attachment_name}</span>
                           </button>
-                        ) : (<span className="text-xs text-muted-foreground">—</span>)}
+                        ) : (<span className="text-sm text-muted-foreground">—</span>)}
                       </td>
-                      <td className="px-4 sm:px-5 py-4 text-sm text-muted-foreground whitespace-nowrap">{leave.created_at?.slice(0, 10)}</td>
-                      <td className="px-4 sm:px-5 py-4">
-                        <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium border whitespace-nowrap ${cfg.className}`}>
-                          <Icon className="w-3 h-3" /> {cfg.label}
+                      <td className="px-4 sm:px-5 py-5 text-base text-muted-foreground whitespace-nowrap">{leave.created_at?.slice(0, 10)}</td>
+                      <td className="px-4 sm:px-5 py-5">
+                        <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-sm font-medium border whitespace-nowrap ${cfg.className}`}>
+                          <Icon className="w-4 h-4" /> {cfg.label}
                         </span>
                       </td>
-                      <td className="px-4 sm:px-5 py-4">
+                      <td className="px-4 sm:px-5 py-5">
                         {leave.status === "pending" && (
-                          <div className="flex items-center gap-1">
-                            <button onClick={() => handleApprove(leave)} className="w-6 h-6 rounded-full bg-emerald-100 flex items-center justify-center hover:bg-emerald-200 transition-colors" title="Approve">
-                              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                          <div className="flex items-center gap-2">
+                            <button onClick={() => handleApprove(leave)}
+                              className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-lg bg-emerald-100 text-emerald-700 hover:bg-emerald-200 transition-colors" title="Approve">
+                              <CheckCircle2 className="w-4 h-4" /> Approve
                             </button>
-                            <button onClick={() => handleReject(leave)} className="w-6 h-6 rounded-full bg-red-100 flex items-center justify-center hover:bg-red-200 transition-colors" title="Reject">
-                              <XCircle className="w-3.5 h-3.5 text-red-600" />
+                            <button onClick={() => handleReject(leave)}
+                              className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-lg bg-red-100 text-red-700 hover:bg-red-200 transition-colors" title="Reject">
+                              <XCircle className="w-4 h-4" /> Reject
                             </button>
                           </div>
+                        )}
+                        {leave.status === "approved" && (
+                          <button onClick={() => setCancelTarget(leave)}
+                            className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-lg border border-red-200 text-red-600 hover:bg-red-50 transition-colors" title="Cancel this approved leave">
+                            <Ban className="w-4 h-4" /> Cancel
+                          </button>
                         )}
                       </td>
                     </tr>
@@ -489,16 +587,16 @@ export function LeaveManagementPage() {
               </tbody>
             </table>
           </div>
-          <div className="flex flex-col sm:flex-row items-center justify-between gap-3 px-4 sm:px-5 py-3.5 border-t border-border">
-            <p className="text-xs text-muted-foreground">
+          <div className="flex flex-col sm:flex-row items-center justify-between gap-3 px-4 sm:px-5 py-4 border-t border-border">
+            <p className="text-sm text-muted-foreground">
               Showing {filtered.length === 0 ? 0 : (page - 1) * perPage + 1}–{Math.min(page * perPage, filtered.length)} of {filtered.length} requests
             </p>
             <div className="flex items-center gap-1 flex-wrap justify-center">
-              <button disabled={page <= 1} onClick={() => setPage((p) => p - 1)} className="w-8 h-8 rounded-lg flex items-center justify-center hover:bg-muted disabled:opacity-40 transition-colors"><ChevronLeft className="w-4 h-4" /></button>
+              <button disabled={page <= 1} onClick={() => setPage((p) => p - 1)} className="w-9 h-9 rounded-lg flex items-center justify-center hover:bg-muted disabled:opacity-40 transition-colors"><ChevronLeft className="w-4 h-4" /></button>
               {Array.from({ length: totalPages }, (_, i) => i + 1).slice(0, 5).map((p) => (
-                <button key={p} onClick={() => setPage(p)} className={`w-8 h-8 rounded-lg text-xs font-medium transition-colors ${p === page ? "bg-primary text-white" : "hover:bg-muted text-muted-foreground"}`}>{p}</button>
+                <button key={p} onClick={() => setPage(p)} className={`w-9 h-9 rounded-lg text-sm font-medium transition-colors ${p === page ? "bg-primary text-white" : "hover:bg-muted text-muted-foreground"}`}>{p}</button>
               ))}
-              <button disabled={page >= totalPages} onClick={() => setPage((p) => p + 1)} className="w-8 h-8 rounded-lg flex items-center justify-center hover:bg-muted disabled:opacity-40 transition-colors"><ChevronRight className="w-4 h-4" /></button>
+              <button disabled={page >= totalPages} onClick={() => setPage((p) => p + 1)} className="w-9 h-9 rounded-lg flex items-center justify-center hover:bg-muted disabled:opacity-40 transition-colors"><ChevronRight className="w-4 h-4" /></button>
             </div>
           </div>
         </div>
@@ -507,6 +605,15 @@ export function LeaveManagementPage() {
       <AnimatePresence>
         {showNewRequestModal && (
           <NewLeaveRequestModal onClose={() => setShowNewRequestModal(false)} onCreated={() => fetchLeaves(false)} />
+        )}
+        {cancelTarget && (
+          <CancelLeaveModal
+            leave={cancelTarget}
+            empName={getEmpName(cancelTarget)}
+            busy={cancelling}
+            onClose={() => setCancelTarget(null)}
+            onConfirm={handleConfirmCancel}
+          />
         )}
       </AnimatePresence>
 
