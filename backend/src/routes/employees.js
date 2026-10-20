@@ -134,9 +134,12 @@ router.delete("/:id/permanent", requireRole(...ROLE_GROUPS.ADMIN_ONLY), async (r
 });
 
 // ===== CRUD =====
+// Naka-sort ayon sa employee_code (E001, E002, E003, ...) para nasa taas ang pinakaunang ID.
 router.get("/", requireRole(...ROLE_GROUPS.EMPLOYEE_MANAGERS), async (req, res) => {
   try {
-    const rows = await q(`${SELECT_EMPLOYEE} WHERE e.deleted_at IS NULL ORDER BY e.created_at DESC`);
+    const rows = await q(
+      `${SELECT_EMPLOYEE} WHERE e.deleted_at IS NULL ORDER BY e.employee_code ASC, e.created_at ASC`
+    );
     return res.json(rows.map(withDept));
   } catch (err) {
     return safeError(res, err, "Failed to fetch employees.");
