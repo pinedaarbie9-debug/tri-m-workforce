@@ -1,6 +1,7 @@
 // backend/src/services/hr3Training.js
 // HR2 ang tumatawag sa HR3 (GET .../training-sessions.php) para malaman kung sinong empleyado
 // ang nasa scheduled training, para hindi sila ma-mark na absent / late sa oras na iyon.
+// Last updated: 2026-10-20 — idinagdag ang getTrainingSyncStatus() para sa Settings > Integrations.
 import crypto from "node:crypto";
 import { q } from "../db.js";
 
@@ -169,6 +170,24 @@ export async function pullTrainingSessions(from, to) {
 const lastPull = new Map(); // "from|to" -> timestamp ng huling pull
 const inflight = new Map(); // "from|to" -> Promise
 
+// Huling resulta ng sync (para sa Settings > Integrations). Nasa memory lang; nare-reset kapag nag-restart ang server.
+const syncStatus = { last_attempt_at: null, last_ok_at: null, last_error: null, last_fetched: 0 };
+
+export function getTrainingSyncStatus() {
+  return { ...syncStatus };
+}
+
+function recordSync(result) {
+  syncStatus.last_attempt_at = new Date().toISOString();
+  if (result.ok) {
+    syncStatus.last_ok_at = syncStatus.last_attempt_at;
+    syncStatus.last_error = null;
+    syncStatus.last_fetched = result.fetched ?? 0;
+  } else {
+    syncStatus.last_error = result.error ?? "Unknown error";
+  }
+}
+
 /** Hindi nagta-throw. Kapag pumalya ang HR3, gagamitin lang ang cache. */
 export async function refreshTrainingIfStale(from, to) {
   try {
@@ -182,6 +201,7 @@ export async function refreshTrainingIfStale(from, to) {
     if (!promise) {
       promise = pullTrainingSessions(from, to)
         .then((result) => {
+          recordSync(result);
           lastPull.set(key, result.ok ? Date.now() : Date.now() - STALE_MS + RETRY_AFTER_FAIL_MS);
           if (!result.ok) console.warn("⚠️ HR3 training refresh failed:", result.error);
           return result;
@@ -217,6 +237,7 @@ export function startHr3TrainingSync() {
       const from = dayOffset(-JOB_PAST_DAYS);
       const to = dayOffset(JOB_FUTURE_DAYS);
       const result = await pullTrainingSessions(from, to);
+      recordSync(result);
       if (result.ok) {
         lastPull.set(`${from}|${to}`, Date.now());
         console.log(`🎓 HR3 trainings synced (${from}..${to}): fetched=${result.fetched} saved=${result.saved} skipped=${result.skipped}`);
