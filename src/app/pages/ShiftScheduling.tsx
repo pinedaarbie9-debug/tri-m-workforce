@@ -112,6 +112,10 @@ const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
 // "HH:mm:ss" -> "HH:mm" (para sa display)
 const hhmm = (t?: string) => (t ? t.slice(0, 5) : "");
 
+// 🔒 Petsa ngayon (YYYY-MM-DD). Ang ngayon mismo ay pwede pa; bawal ang bago nito.
+const todayKeyNow = () => format(new Date(), "yyyy-MM-dd");
+const isPastKey = (key: string) => key < todayKeyNow();
+
 // Pinakaunang ID muna (E001, E002, ...). Numeric ang pagkukumpara kaya tama rin ang E2 bago E10.
 const byCode = (a: { employee_code?: string }, b: { employee_code?: string }) =>
   (a.employee_code ?? "").localeCompare(b.employee_code ?? "", undefined, {
@@ -305,9 +309,13 @@ export function ShiftSchedulingPage() {
   const from = format(gridStart, "yyyy-MM-dd");
   const to = format(gridEnd, "yyyy-MM-dd");
 
-  // 🆕 Default range ng auto-schedule: buong buwan na nakikita (hindi kasama ang leading/trailing days)
-  const autoFrom = format(monthStart, "yyyy-MM-dd");
-  const autoTo = format(monthEnd, "yyyy-MM-dd");
+  // 🆕 Default range ng auto-schedule: simula ngayon (o simula ng buwan kung future na),
+  // hanggang katapusan ng buwan. Hindi na magsisimula sa petsang lumipas na.
+  const todayKey = todayKeyNow();
+  const monthStartKey = format(monthStart, "yyyy-MM-dd");
+  const monthEndKey = format(monthEnd, "yyyy-MM-dd");
+  const autoFrom = monthStartKey < todayKey ? todayKey : monthStartKey;
+  const autoTo = monthEndKey < autoFrom ? autoFrom : monthEndKey;
 
   // 🔒 Generate all days sa grid (halimbawa: Sep 1-30 + leading/trailing)
   const calendarDays: Date[] = [];
@@ -405,6 +413,11 @@ export function ShiftSchedulingPage() {
       setFormError("Please select an employee and shift.");
       return;
     }
+    // 🔒 Bawal mag-schedule sa petsang lumipas na
+    if (isPastKey(assignDate)) {
+      setFormError("You can't schedule a shift on a past date.");
+      return;
+    }
     setSavingAssign(true);
     try {
       await api.assignShift({ ...assignForm, date: assignDate });
@@ -420,6 +433,8 @@ export function ShiftSchedulingPage() {
   }
 
   function openAssign(key: string) {
+    // 🔒 Huwag buksan ang assign dialog para sa nakaraang araw
+    if (isPastKey(key)) return;
     setAssignForm(emptyAssignForm);
     setFormError(null);
     setAssignDate(key);
@@ -590,6 +605,7 @@ export function ShiftSchedulingPage() {
                 const key = format(d, "yyyy-MM-dd");
                 const inMonth = isSameMonth(d, currentMonth);
                 const today = isToday(d);
+                const past = isPastKey(key);
                 const holiday = PH_HOLIDAYS_2026[key];
                 const dayAssignments = assignmentsByDate[key] ?? [];
 
@@ -598,7 +614,9 @@ export function ShiftSchedulingPage() {
                     key={key}
                     className={`border-r border-b border-border last:border-r-0 min-h-[210px] ${
                       !inMonth ? "bg-muted/20 opacity-60" : ""
-                    } ${today ? "bg-primary/5" : ""} ${holiday ? "bg-red-50" : ""}`}
+                    } ${today ? "bg-primary/5" : ""} ${holiday ? "bg-red-50" : ""} ${
+                      past && inMonth && !holiday ? "bg-muted/10" : ""
+                    }`}
                   >
                     <div className="p-2.5">
                       {/* Date number */}
@@ -610,7 +628,9 @@ export function ShiftSchedulingPage() {
                               : holiday
                               ? "text-red-600"
                               : inMonth
-                              ? "text-foreground"
+                              ? past
+                                ? "text-muted-foreground"
+                                : "text-foreground"
                               : "text-muted-foreground"
                           }`}
                         >
@@ -686,8 +706,8 @@ export function ShiftSchedulingPage() {
                         )}
                       </div>
 
-                      {/* Add button */}
-                      {inMonth && shiftTypes.length > 0 && (
+                      {/* Add button — nakatago sa mga nakaraang araw */}
+                      {inMonth && shiftTypes.length > 0 && !past && (
                         <button
                           onClick={() => openAssign(key)}
                           className="w-full flex items-center justify-center py-1.5 mt-2 rounded-lg border border-dashed border-border text-base text-muted-foreground hover:border-primary/50 hover:text-primary hover:bg-primary/5 transition-colors"
@@ -984,19 +1004,22 @@ export function ShiftSchedulingPage() {
                 );
               })}
             </div>
-            <div className="flex justify-end">
-              <button
-                type="button"
-                onClick={() => {
-                  const key = dayView;
-                  setDayView(null);
-                  if (key) openAssign(key);
-                }}
-                className="flex items-center gap-2 px-5 py-3 text-base font-semibold bg-primary text-white rounded-xl hover:bg-primary/90 transition-colors"
-              >
-                <Plus className="w-5 h-5" /> Assign employee
-              </button>
-            </div>
+            {/* Nakatago ang "Assign employee" kung nakaraang araw na */}
+            {dayView && !isPastKey(dayView) && (
+              <div className="flex justify-end">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const key = dayView;
+                    setDayView(null);
+                    if (key) openAssign(key);
+                  }}
+                  className="flex items-center gap-2 px-5 py-3 text-base font-semibold bg-primary text-white rounded-xl hover:bg-primary/90 transition-colors"
+                >
+                  <Plus className="w-5 h-5" /> Assign employee
+                </button>
+              </div>
+            )}
           </div>
         </DialogContent>
       </Dialog>

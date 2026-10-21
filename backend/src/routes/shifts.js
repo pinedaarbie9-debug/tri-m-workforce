@@ -54,10 +54,26 @@ const MAX_CONSECUTIVE_DAYS = 6;
 const MAX_RANGE_DAYS = 62;
 const INSERT_CHUNK = 200;
 
+// Timezone ng kumpanya — dito kinukuha ang "ngayon" para tama kahit UTC ang server
+const APP_TIMEZONE = "Asia/Manila";
+
 const parseDate = (s) => new Date(`${s}T00:00:00Z`);
 const fmtDate = (d) => d.toISOString().slice(0, 10);
 const addDays = (s, n) => fmtDate(new Date(parseDate(s).getTime() + n * DAY_MS));
 const dayOfWeek = (s) => parseDate(s).getUTCDay();
+
+// Petsa ngayon (YYYY-MM-DD) sa Asia/Manila
+function todayStr() {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: APP_TIMEZONE,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date());
+}
+
+// Ang ngayon mismo ay pwede pa; bawal ang mga araw bago nito
+const isPastDate = (s) => s < todayStr();
 
 function isValidDate(s) {
   if (typeof s !== "string" || !DATE_RE.test(s)) return false;
@@ -265,7 +281,8 @@ router.get(
 
 // ============================================================
 // POST /shifts/assignments — MANAGEMENT only
-// May 6-day rule: 409 kapag makakabuo ng higit 6 na sunod-sunod na araw
+// - Bawal sa nakaraang petsa (400)
+// - 6-day rule: 409 kapag makakabuo ng higit 6 na sunod-sunod na araw
 // ============================================================
 router.post(
   "/assignments",
@@ -277,6 +294,14 @@ router.post(
       const { employee_id, shift_id, date } = parsed.data;
 
       const day = toDateStr(date);
+
+      // Bawal mag-schedule pabalik sa petsang lumipas na
+      if (isValidDate(day) && isPastDate(day)) {
+        return res.status(400).json({
+          error: "Cannot schedule a shift on a past date. Only today or future dates are allowed.",
+        });
+      }
+
       if (isValidDate(day)) {
         const existing = await q(
           `SELECT date FROM employee_shifts
@@ -331,7 +356,7 @@ router.post(
 // }
 // Rules-based (walang LLM). Hindi gumagalaw sa existing assignments,
 // nilalaktawan ang approved leave, at hindi lalampas sa 6 na sunod-sunod
-// na araw. Leave Management ay READ-ONLY dito.
+// na araw. Bawal ang `from` na nakaraan na. Leave Management ay READ-ONLY dito.
 // ============================================================
 router.post(
   "/auto-schedule",
@@ -352,6 +377,12 @@ router.post(
       }
       if (to < from) {
         return res.status(400).json({ error: "to must not be earlier than from." });
+      }
+      // Bawal mag-auto-schedule pabalik sa petsang lumipas na
+      if (isPastDate(from)) {
+        return res.status(400).json({
+          error: `Cannot auto-schedule starting on a past date. The earliest allowed start is ${todayStr()}.`,
+        });
       }
       const dates = enumerateDates(from, to);
       if (dates.length > MAX_RANGE_DAYS) {

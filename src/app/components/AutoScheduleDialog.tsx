@@ -10,6 +10,13 @@ interface Props {
   onApplied: () => void; // i-refetch ang calendar
 }
 
+// 🔒 Petsa ngayon (YYYY-MM-DD, local time). Ang ngayon mismo ay pwede pa; bawal ang bago nito.
+function todayKey() {
+  const d = new Date();
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
+
 export function AutoScheduleDialog({ open, onClose, shiftTypes, defaultFrom, defaultTo, onApplied }: Props) {
   const [from, setFrom] = useState(defaultFrom);
   const [to, setTo] = useState(defaultTo);
@@ -21,10 +28,15 @@ export function AutoScheduleDialog({ open, onClose, shiftTypes, defaultFrom, def
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
+  const today = todayKey();
+
   useEffect(() => {
     if (!open) return;
-    setFrom(defaultFrom);
-    setTo(defaultTo);
+    // 🔒 Hindi pwedeng magsimula sa petsang lumipas na
+    const safeFrom = defaultFrom < todayKey() ? todayKey() : defaultFrom;
+    const safeTo = defaultTo < safeFrom ? safeFrom : defaultTo;
+    setFrom(safeFrom);
+    setTo(safeTo);
     setPreview(null);
     setError("");
     api.getDepartments().then(setDepartments).catch(() => setDepartments([]));
@@ -39,6 +51,23 @@ export function AutoScheduleDialog({ open, onClose, shiftTypes, defaultFrom, def
 
   if (!open) return null;
 
+  // 🔒 Validation ng petsa
+  const fromIsPast = Boolean(from) && from < today;
+  const toBeforeFrom = Boolean(from) && Boolean(to) && to < from;
+  const dateProblem = !from || !to
+    ? "Pumili ng From at To na petsa."
+    : fromIsPast
+    ? "Hindi pwedeng mag-schedule sa petsang lumipas na. Ang pinakamaagang simula ay ngayong araw."
+    : toBeforeFrom
+    ? "Ang To ay hindi pwedeng mas maaga kaysa From."
+    : "";
+
+  const handleFromChange = (value: string) => {
+    setFrom(value);
+    // Siguraduhing hindi mas maaga ang To kaysa From
+    if (value && to && to < value) setTo(value);
+  };
+
   const payload = (mode: "preview" | "apply") => ({
     from,
     to,
@@ -49,6 +78,10 @@ export function AutoScheduleDialog({ open, onClose, shiftTypes, defaultFrom, def
   });
 
   const runPreview = async () => {
+    if (dateProblem) {
+      setError(dateProblem);
+      return;
+    }
     setLoading(true);
     setError("");
     try {
@@ -61,6 +94,10 @@ export function AutoScheduleDialog({ open, onClose, shiftTypes, defaultFrom, def
   };
 
   const runApply = async () => {
+    if (dateProblem) {
+      setError(dateProblem);
+      return;
+    }
     setLoading(true);
     setError("");
     try {
@@ -85,6 +122,7 @@ export function AutoScheduleDialog({ open, onClose, shiftTypes, defaultFrom, def
             <h2 className="text-lg font-medium text-foreground">Auto-schedule</h2>
             <p className="text-sm text-muted-foreground">
               Rules-based. Walang employee na lalampas sa 6 na sunod-sunod na araw. Nilalaktawan ang approved leave.
+              Ngayong araw at susunod na mga araw lang ang pwedeng i-schedule.
             </p>
           </div>
           <button onClick={onClose} className="text-muted-foreground hover:text-foreground text-xl leading-none">×</button>
@@ -93,11 +131,23 @@ export function AutoScheduleDialog({ open, onClose, shiftTypes, defaultFrom, def
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div>
             <label className={label}>From</label>
-            <input type="date" className={field} value={from} onChange={(e) => setFrom(e.target.value)} />
+            <input
+              type="date"
+              className={field}
+              value={from}
+              min={today}
+              onChange={(e) => handleFromChange(e.target.value)}
+            />
           </div>
           <div>
             <label className={label}>To</label>
-            <input type="date" className={field} value={to} onChange={(e) => setTo(e.target.value)} />
+            <input
+              type="date"
+              className={field}
+              value={to}
+              min={from && from > today ? from : today}
+              onChange={(e) => setTo(e.target.value)}
+            />
           </div>
           <div>
             <label className={label}>Shift</label>
@@ -128,8 +178,10 @@ export function AutoScheduleDialog({ open, onClose, shiftTypes, defaultFrom, def
           </div>
         </div>
 
-        {error && (
-          <div className="rounded-lg border border-red-300 bg-red-50 text-red-700 px-3 py-2 text-sm">{error}</div>
+        {(error || dateProblem) && (
+          <div className="rounded-lg border border-red-300 bg-red-50 text-red-700 px-3 py-2 text-sm">
+            {error || dateProblem}
+          </div>
         )}
 
         {preview && (
@@ -171,14 +223,14 @@ export function AutoScheduleDialog({ open, onClose, shiftTypes, defaultFrom, def
           <button onClick={onClose} className="rounded-lg border border-border px-4 py-2 text-sm">Cancel</button>
           <button
             onClick={runPreview}
-            disabled={loading || !shiftId}
+            disabled={loading || !shiftId || Boolean(dateProblem)}
             className="rounded-lg border border-border px-4 py-2 text-sm disabled:opacity-50"
           >
             {loading && !preview ? "Working…" : "Preview"}
           </button>
           <button
             onClick={runApply}
-            disabled={loading || !preview || preview.summary.assignments === 0}
+            disabled={loading || !preview || preview.summary.assignments === 0 || Boolean(dateProblem)}
             className="rounded-lg bg-primary text-primary-foreground px-4 py-2 text-sm disabled:opacity-50"
           >
             Apply
