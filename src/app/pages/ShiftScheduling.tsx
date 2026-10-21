@@ -14,6 +14,7 @@ import {
   Search,
   X,
   Check,
+  Sparkles,
 } from "lucide-react";
 import { motion } from "motion/react";
 import {
@@ -28,6 +29,7 @@ import {
   isSameMonth,
 } from "date-fns";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../components/ui/dialog";
+import { AutoScheduleDialog } from "../components/AutoScheduleDialog";
 import { api } from "../../lib/api";
 
 // ============================================================
@@ -291,6 +293,9 @@ export function ShiftSchedulingPage() {
   const [dayView, setDayView] = useState<string | null>(null);
   const [dayQuery, setDayQuery] = useState("");
 
+  // 🆕 Auto-schedule dialog
+  const [autoOpen, setAutoOpen] = useState(false);
+
   // 🔒 Date range: buong buwan (kasama ang leading/trailing days para sa grid)
   const monthStart = startOfMonth(currentMonth);
   const monthEnd = endOfMonth(currentMonth);
@@ -299,6 +304,10 @@ export function ShiftSchedulingPage() {
 
   const from = format(gridStart, "yyyy-MM-dd");
   const to = format(gridEnd, "yyyy-MM-dd");
+
+  // 🆕 Default range ng auto-schedule: buong buwan na nakikita (hindi kasama ang leading/trailing days)
+  const autoFrom = format(monthStart, "yyyy-MM-dd");
+  const autoTo = format(monthEnd, "yyyy-MM-dd");
 
   // 🔒 Generate all days sa grid (halimbawa: Sep 1-30 + leading/trailing)
   const calendarDays: Date[] = [];
@@ -403,6 +412,7 @@ export function ShiftSchedulingPage() {
       setAssignForm(emptyAssignForm);
       fetchAll();
     } catch (err: any) {
+      // Kasama dito ang 409 na mensahe ng 6-day rule
       setFormError(err.message ?? "Failed to assign shift.");
     } finally {
       setSavingAssign(false);
@@ -458,16 +468,26 @@ export function ShiftSchedulingPage() {
               Monthly view — manage and assign employee shifts
             </p>
           </div>
-          <button
-            onClick={() => {
-              setShiftForm(emptyShiftForm);
-              setFormError(null);
-              setShowCreateShiftModal(true);
-            }}
-            className="flex items-center justify-center gap-2 px-5 py-3 bg-white/15 backdrop-blur-sm text-white rounded-xl border border-white/30 hover:bg-white/25 transition-colors text-base font-semibold shrink-0 self-start"
-          >
-            <Plus className="w-5 h-5" /> Create Shift
-          </button>
+          <div className="flex flex-wrap items-center gap-3 shrink-0 self-start">
+            <button
+              onClick={() => setAutoOpen(true)}
+              disabled={shiftTypes.length === 0}
+              className="flex items-center justify-center gap-2 px-5 py-3 bg-white text-primary rounded-xl hover:bg-white/90 disabled:opacity-60 transition-colors text-base font-semibold"
+              title={shiftTypes.length === 0 ? "Create a shift first" : "Auto-schedule shifts"}
+            >
+              <Sparkles className="w-5 h-5" /> Auto-schedule
+            </button>
+            <button
+              onClick={() => {
+                setShiftForm(emptyShiftForm);
+                setFormError(null);
+                setShowCreateShiftModal(true);
+              }}
+              className="flex items-center justify-center gap-2 px-5 py-3 bg-white/15 backdrop-blur-sm text-white rounded-xl border border-white/30 hover:bg-white/25 transition-colors text-base font-semibold"
+            >
+              <Plus className="w-5 h-5" /> Create Shift
+            </button>
+          </div>
         </div>
       </motion.div>
 
@@ -980,6 +1000,16 @@ export function ShiftSchedulingPage() {
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* 🆕 Auto-schedule Dialog (preview muna bago i-save) */}
+      <AutoScheduleDialog
+        open={autoOpen}
+        onClose={() => setAutoOpen(false)}
+        shiftTypes={shiftTypes}
+        defaultFrom={autoFrom}
+        defaultTo={autoTo}
+        onApplied={fetchAll}
+      />
     </div>
   );
 }

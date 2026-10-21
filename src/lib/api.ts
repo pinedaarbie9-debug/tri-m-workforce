@@ -257,6 +257,35 @@ export interface AnalyticsResponse {
 }
 
 // ============================================================
+// Auto-schedule response
+// ============================================================
+export interface AutoScheduleResult {
+  mode: "preview" | "apply";
+  from: string;
+  to: string;
+  summary: {
+    employees: number;
+    assignments: number;
+    skipped_on_leave: number;
+    skipped_max_consecutive: number;
+  };
+  assignments?: {
+    employee_id: string;
+    employee_name: string;
+    department_name: string | null;
+    date: string;
+    shift_id: string;
+  }[];
+  skipped?: {
+    employee_id: string;
+    employee_name: string;
+    date: string;
+    reason: "on_leave" | "max_consecutive_days";
+  }[];
+  inserted?: number;
+}
+
+// ============================================================
 // API Endpoints
 // ============================================================
 export const api = {
@@ -498,6 +527,20 @@ export const api = {
     request<any[]>(`/shifts/assignments?from=${from}&to=${to}`),
   assignShift: (data: any) =>
     request<{ id: string }>("/shifts/assignments", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+  // 🆕 Rules-based auto-scheduler (preview muna, saka apply)
+  autoScheduleShifts: (data: {
+    from: string;
+    to: string;
+    shift_id: string;
+    days_per_week?: number;
+    department_id?: string;
+    employee_ids?: string[];
+    mode: "preview" | "apply";
+  }) =>
+    request<AutoScheduleResult>("/shifts/auto-schedule", {
       method: "POST",
       body: JSON.stringify(data),
     }),
