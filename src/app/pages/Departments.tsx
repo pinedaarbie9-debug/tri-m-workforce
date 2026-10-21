@@ -1,5 +1,5 @@
-import { useState, useEffect, useCallback } from "react";
-import { Building2, Search, Plus, MoreHorizontal, Edit2, Trash2, Loader2, Users, X, UserMinus } from "lucide-react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import { Building2, Search, Plus, MoreHorizontal, Edit2, Trash2, Loader2, Users, X, UserMinus, Check, ChevronDown } from "lucide-react";
 import { motion } from "motion/react";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "../components/ui/dropdown-menu";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../components/ui/dialog";
@@ -25,6 +25,153 @@ interface Employee {
 const COLOR_OPTIONS = ["#7c3aed", "#06b6d4", "#10b981", "#f59e0b", "#ec4899", "#8b5cf6", "#14b8a6"];
 
 const emptyForm = { name: "", code: "", manager: "", color: COLOR_OPTIONS[0] };
+
+// ------------------------------------------------------------------
+// Dropdown ng empleyado: naka-alpabetikal (A-Z) at may search (pangalan o posisyon).
+// Bumubukas ang listahan sa ilalim mismo (hindi absolute), kaya hindi naku-clip sa loob ng Dialog.
+// ------------------------------------------------------------------
+type EmployeeOption = { id: string; full_name: string; job_title?: string | null };
+
+// Walang pakialam sa malaki/maliit na letra at sa accent (hal. "Peña" = "pena").
+const normalizeText = (s: string) => s.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+
+function EmployeeCombobox({
+  employees,
+  value,
+  onChange,
+  placeholder = "Select employee...",
+}: {
+  employees: EmployeeOption[];
+  value: string;
+  onChange: (id: string) => void;
+  placeholder?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const [active, setActive] = useState(0);
+
+  const rootRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const listRef = useRef<HTMLUListElement>(null);
+
+  const sorted = useMemo(
+    () =>
+      [...employees].sort((a, b) =>
+        (a.full_name ?? "").localeCompare(b.full_name ?? "", undefined, { sensitivity: "base" })
+      ),
+    [employees]
+  );
+
+  const filteredList = useMemo(() => {
+    const q = normalizeText(query.trim());
+    if (!q) return sorted;
+    return sorted.filter((e) => normalizeText(`${e.full_name ?? ""} ${e.job_title ?? ""}`).includes(q));
+  }, [sorted, query]);
+
+  const selected = sorted.find((e) => e.id === value);
+
+  useEffect(() => {
+    if (!open) return;
+    listRef.current?.querySelector<HTMLElement>('[data-active="true"]')?.scrollIntoView({ block: "nearest" });
+  }, [active, open, filteredList]);
+
+  function close() {
+    setOpen(false);
+    setQuery("");
+    setActive(0);
+  }
+
+  function pick(id: string) {
+    onChange(id);
+    close();
+  }
+
+  function onKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      setActive((i) => Math.min(i + 1, Math.max(filteredList.length - 1, 0)));
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      setActive((i) => Math.max(i - 1, 0));
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      if (filteredList[active]) pick(filteredList[active].id);
+    }
+  }
+
+  return (
+    <div
+      ref={rootRef}
+      onBlur={(e) => {
+        if (!rootRef.current?.contains(e.relatedTarget as Node | null)) close();
+      }}
+    >
+      <button
+        type="button"
+        onClick={() => {
+          setOpen((o) => !o);
+          setTimeout(() => inputRef.current?.focus(), 0);
+        }}
+        className="w-full flex items-center justify-between gap-2 px-3.5 py-2.5 rounded-lg border border-border bg-input-background text-sm text-left focus:outline-none focus:ring-2 focus:ring-primary/20"
+      >
+        <span className={`truncate ${selected ? "text-foreground" : "text-muted-foreground"}`}>
+          {selected ? `${selected.full_name}${selected.job_title ? ` — ${selected.job_title}` : ""}` : placeholder}
+        </span>
+        <ChevronDown className="w-4 h-4 text-muted-foreground shrink-0" />
+      </button>
+
+      {open && (
+        <div className="mt-1.5 rounded-lg border border-border bg-card shadow-sm overflow-hidden">
+          <div className="flex items-center gap-2 px-3 py-2 border-b border-border">
+            <Search className="w-4 h-4 text-muted-foreground shrink-0" />
+            <input
+              ref={inputRef}
+              autoFocus
+              value={query}
+              onChange={(e) => {
+                setQuery(e.target.value);
+                setActive(0);
+              }}
+              onKeyDown={onKeyDown}
+              placeholder="Search name or position..."
+              className="w-full bg-transparent text-sm outline-none placeholder:text-muted-foreground"
+            />
+          </div>
+
+          <ul
+            ref={listRef}
+            role="listbox"
+            onMouseDown={(e) => e.preventDefault()}
+            className="max-h-56 overflow-y-auto py-1"
+          >
+            {filteredList.length === 0 && (
+              <li className="px-3 py-2.5 text-sm text-muted-foreground">No employees found.</li>
+            )}
+            {filteredList.map((emp, i) => (
+              <li
+                key={emp.id}
+                role="option"
+                aria-selected={emp.id === value}
+                data-active={i === active}
+                onMouseEnter={() => setActive(i)}
+                onClick={() => pick(emp.id)}
+                className={`flex items-center justify-between gap-2 px-3 py-2 text-sm cursor-pointer ${
+                  i === active ? "bg-muted/60" : ""
+                }`}
+              >
+                <span className="min-w-0">
+                  <span className="text-foreground">{emp.full_name}</span>
+                  {emp.job_title && <span className="text-muted-foreground"> — {emp.job_title}</span>}
+                </span>
+                {emp.id === value && <Check className="w-4 h-4 text-primary shrink-0" />}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </div>
+  );
+}
 
 export function DepartmentsPage() {
   const [departments, setDepartments] = useState<Department[]>([]);
@@ -476,19 +623,15 @@ export function DepartmentsPage() {
             <div className="space-y-4">
               <div className="space-y-1.5">
                 <label className="text-sm font-medium text-foreground">Assign an employee to this department</label>
-                <div className="flex flex-col sm:flex-row gap-2">
-                  <select
-                    value={selectedToAssign}
-                    onChange={(e) => setSelectedToAssign(e.target.value)}
-                    className="flex-1 px-3.5 py-2.5 rounded-lg border border-border bg-input-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/20"
-                  >
-                    <option value="">Select employee...</option>
-                    {unassignedOrOtherDeptEmployees.map((emp) => (
-                      <option key={emp.id} value={emp.id}>
-                        {emp.full_name} — {emp.job_title}
-                      </option>
-                    ))}
-                  </select>
+                <div className="flex flex-col sm:flex-row gap-2 sm:items-start">
+                  <div className="flex-1 min-w-0">
+                    <EmployeeCombobox
+                      employees={unassignedOrOtherDeptEmployees}
+                      value={selectedToAssign}
+                      onChange={setSelectedToAssign}
+                      placeholder="Select employee..."
+                    />
+                  </div>
                   <button
                     onClick={handleAssignEmployee}
                     disabled={!selectedToAssign || assigningId === selectedToAssign}
