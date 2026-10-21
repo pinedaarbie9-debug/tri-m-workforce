@@ -231,6 +231,32 @@ export interface FingerprintEnrollSession {
 }
 
 // ============================================================
+// Analytics response
+// ============================================================
+export interface AnalyticsResponse {
+  period: "quarter" | "half" | "year";
+  label: string; // "Q4" | "H2" | "2026"
+  range_text: string;
+  from: string;
+  to: string;
+  kpis: {
+    avg_tenure_years: number | null;
+    active_employees: number;
+    total_employees: number;
+    separated_employees: number;
+    turnover_rate: number | null;
+    avg_hours_week: number | null;
+    avg_hours_week_prev: number | null;
+    attendance_rate: number | null;
+    attendance_rate_prev: number | null;
+  };
+  headcount_by_dept: { dept: string; count: number }[];
+  attendance_by_month: { month: string; rate: number | null; scheduled: number; attended: number }[];
+  leave_distribution: { name: string; value: number; requests: number }[];
+  overtime_trend: { week: string; hours: number }[];
+}
+
+// ============================================================
 // API Endpoints
 // ============================================================
 export const api = {
@@ -541,6 +567,10 @@ export const api = {
       method: "PATCH",
       body: JSON.stringify({ status }),
     }),
+
+  // ---- Analytics (totoong data, galing sa GET /analytics) ----
+  getAnalytics: (period: "quarter" | "half" | "year" = "quarter") =>
+    request<AnalyticsResponse>(`/analytics?period=${period}`),
 
   // ---- Reports ----
   getReportsSummary: () =>

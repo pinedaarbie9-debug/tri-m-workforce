@@ -6,6 +6,8 @@
 // Last updated: 2026-10-17 — FIX: hiwalay na rate limiter para sa fingerprint bridge at live enrollment polling
 //                            (dati, 300 req/15min ang general limiter kaya na-429 ang scanner na nagpa-poll kada 1s)
 // Last updated: 2026-10-18 — TEMP: import ng fileExportPasswordReset (tanggalin pagkatapos ng reset)
+// Last updated: 2026-10-21 — FIX: tinanggal ang testPunchSeed import (ito ang nagbabalik ng TEST DATA punches ni E033 tuwing restart)
+// Last updated: 2026-10-21 — ADD: /api/analytics route (totoong data para sa Analytics page)
 
 import express from "express";
 import cors from "cors";
@@ -66,6 +68,7 @@ import notificationsRoutes from "./routes/notifications.js";
 import settingsRoutes from "./routes/settings.js";
 import timesheetsRoutes from "./routes/timesheets.js";
 import reportsRoutes from "./routes/reports.js";
+import analyticsRoutes from "./routes/analytics.js"; // ADD: totoong data para sa Analytics page
 import deviceAttendanceRoutes from "./routes/deviceattendance.js";
 import partnerAttendanceRoutes from "./routes/partnerAttendance.js";
 import fingerprintBridgeRoutes from "./routes/fingerprintBridge.js"; // FIX: dati wala itong import
@@ -74,9 +77,6 @@ import { pingDb } from "./db.js"; // FIX: para ma-verify agad ang DB connection 
 
 // TEMP: isang beses na reset ng File Export Password. TANGGALIN ito pagkatapos.
 import "./services/fileExportPasswordReset.js";
-
-// TEMP: test punches para kay E033 (HR3 scoring test). TANGGALIN ito pagkatapos.
-import "./services/testPunchSeed.js";
 
 console.log("✅ All route files imported.");
 
@@ -272,6 +272,7 @@ app.use("/api/notifications", notificationsRoutes);
 app.use("/api/settings", settingsRoutes);
 app.use("/api/timesheets", timesheetsRoutes);
 app.use("/api/reports", reportsRoutes);
+app.use("/api/analytics", analyticsRoutes);
 
 // FIX: Binago ang mounting path para maging /api/partner/sync-data at /api/partner/attendance/:id
 app.use("/api/partner", partnerAttendanceRoutes);
