@@ -7,6 +7,7 @@
 //                            (dati, 300 req/15min ang general limiter kaya na-429 ang scanner na nagpa-poll kada 1s)
 // Last updated: 2026-10-18 — TEMP: import ng fileExportPasswordReset (tanggalin pagkatapos ng reset)
 // Last updated: 2026-10-21 — FIX: tinanggal ang testPunchSeed import (ito ang nagbabalik ng TEST DATA punches ni E033 tuwing restart)
+// Last updated: 2026-10-22 — ADD: /api/hr4-sync (HR2 -> HR4 Payroll push, admin-only, dry-run default)
 // Last updated: 2026-10-21 — ADD: /api/analytics route (totoong data para sa Analytics page)
 
 import express from "express";
@@ -73,6 +74,7 @@ import deviceAttendanceRoutes from "./routes/deviceattendance.js";
 import partnerAttendanceRoutes from "./routes/partnerAttendance.js";
 import fingerprintBridgeRoutes from "./routes/fingerprintBridge.js"; // FIX: dati wala itong import
 import hr3Routes from "./routes/hr3.js"; // ADD: HR3 Integration
+import hr4SyncRoutes from "./routes/hr4Sync.js"; // ADD: HR2 -> HR4 Payroll push
 import { pingDb } from "./db.js"; // FIX: para ma-verify agad ang DB connection sa startup
 
 // TEMP: isang beses na reset ng File Export Password. TANGGALIN ito pagkatapos.
@@ -282,6 +284,9 @@ app.use("/api/fingerprint-bridge", fingerprintBridgeRoutes);
 // ADD: HR3 Integration Routes
 app.use("/api/hr3", hr3Routes);
 
+// ADD: HR4 (Payroll & Benefits) push routes
+app.use("/api/hr4-sync", hr4SyncRoutes);
+
 app.get("/api/health", (req, res) => res.json({ ok: true }));
 
 // ============================================================
@@ -346,4 +351,5 @@ app.listen(PORT, "0.0.0.0", async () => {
   } catch (err) {
     console.error("🚨 Hindi makaconnect sa database sa startup:", err.message);
   }
+
 });
