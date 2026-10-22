@@ -11,8 +11,9 @@ router.use(requireAuth, requireRole(...ROLE_GROUPS.ADMIN_ONLY));
 const HR4_BASE_URL = (process.env.HR4_BASE_URL || "").replace(/\/+$/, "");
 const HR4_API_KEY = process.env.HR4_API_KEY || "";
 
-// employees.employee_code -> hris-<code>. Kumpirmahin kay Eljohn kung lowercase ang number part.
-const hr4EmpId = (code) => `hris-${String(code).trim()}`;
+// employees.employee_code -> hris-<code>, LAHAT LOWERCASE (kinumpirma ni Eljohn: hris-e075).
+// hris-E075 ay 422 sa HR4.
+const hr4EmpId = (code) => `hris-${String(code).trim().toLowerCase()}`;
 
 const num = (n) => Number(n) || 0;
 const validDate = (d) => /^\d{4}-\d{2}-\d{2}$/.test(d || "");
@@ -76,6 +77,30 @@ async function pushToHr4(path, body) {
   try { data = JSON.parse(text); } catch { data = { raw: text }; }
   return { ok: res.ok, status: res.status, data };
 }
+
+// ---------- GET /api/hr4-sync/roster ----------
+// Listahan ng employee numbers at ng hris id na ipapadala sa HR4 (para sa roster check ni Eljohn).
+router.get("/roster", async (_req, res) => {
+  try {
+    const rows = await q(
+      `SELECT e.employee_code AS code, to_jsonb(e) ->> 'status' AS status
+         FROM employees e
+        ORDER BY e.employee_code`
+    );
+    const all = rows.filter((r) => r.code);
+    const hasStatus = all.some((r) => r.status);
+    const active = hasStatus ? all.filter((r) => String(r.status).toLowerCase() === "active") : all;
+    res.json({
+      total: all.length,
+      active_count: active.length,
+      status_column_found: hasStatus,
+      active_hris_ids: active.map((r) => hr4EmpId(r.code)),
+    });
+  } catch (err) {
+    console.error("hr4-sync roster:", err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
 
 // ---------- POST /api/hr4-sync/attendance ----------
 // body: { "from":"2026-10-18", "to":"2026-10-22", "employee_codes":["E033"], "dry_run": true }
