@@ -27,6 +27,17 @@ function parseCodes(v) {
   return { codes: v.map((c) => c.trim()) };
 }
 
+// Walang array param: ang db helper (q) ay ginagawang JSON string ang array, kaya
+// gumagawa tayo ng IN (:c0, :c1, ...) na may sariling named param bawat code.
+function codeFilter(codes, params) {
+  if (!codes) return "";
+  const names = codes.map((c, i) => {
+    params[`c${i}`] = c;
+    return `:c${i}`;
+  });
+  return ` AND e.employee_code IN (${names.join(", ")})`;
+}
+
 // attendance.status -> HR4 status. on_leave at holiday ay hindi ipinapadala.
 const STATUS_MAP = {
   present: "P",
@@ -78,11 +89,7 @@ router.post("/attendance", async (req, res) => {
     if (codesError) return res.status(400).json({ error: codesError });
 
     const params = { d1: from, d2: to };
-    let codeClause = "";
-    if (codes) {
-      codeClause = "AND e.employee_code = ANY(:codes)";
-      params.codes = codes;
-    }
+    const codeClause = codeFilter(codes, params);
 
     // late_minutes: check_in minus start_time ng shift SA ARAW NA IYON (employee_shifts.date = attendance.date),
     // para sa status='late' lang. Parehong lookup ng check-in sa attendance.js.
@@ -180,11 +187,7 @@ router.post("/leaves", async (req, res) => {
     if (codesError) return res.status(400).json({ error: codesError });
 
     const params = { d1: from, d2: to };
-    let extra = "";
-    if (codes) {
-      extra += " AND e.employee_code = ANY(:codes)";
-      params.codes = codes;
-    }
+    let extra = codeFilter(codes, params);
     if (only_completed !== false) {
       extra += " AND lr.end_date < (now() AT TIME ZONE 'Asia/Manila')::date";
     }
